@@ -50,5 +50,4 @@ To interact with the analytics dashboard, ensure your local machine is connected
 
 ```text
 http://<SERVER_TAILSCALE_IP>:8501
-
 ```
