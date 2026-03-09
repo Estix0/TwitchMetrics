@@ -1,0 +1,8 @@
+twitchio>=2.8.0,<3.0.0
+aiosqlite
+aiohttp
+requests
+streamlit
+pandas
+plotly
+streamlit-calendar
