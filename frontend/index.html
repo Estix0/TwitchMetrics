@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TwitchMetrics - Stream & Chat Intelligence</title>
+  
+  <!-- Fonts & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- Top Header -->
+    <header class="header-wrapper">
+      <div class="brand-section">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+        </div>
+        <div class="brand-title">
+          <div style="display: flex; align-items: center; gap: 0.6rem;">
+            <h1>TwitchMetrics</h1>
+            <a id="streamer-link" href="https://twitch.tv" target="_blank" class="brand-channel-badge">
+              <span>@</span><span id="channel-name-display">Streamer</span>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <!-- Live Indicator -->
+        <div id="live-status-pill" class="status-pill offline">
+          <span class="pulse-dot"></span>
+          <span id="live-status-text">OFFLINE</span>
+        </div>
+
+        <!-- Streamer Mode Toggle (Hide Viewers) -->
+        <label class="toggle-wrapper" id="viewer-toggle-wrapper" title="Tryb bezpieczny streamerki: ukrywa statystyki liczby widzów">
+          <div class="toggle-switch">
+            <input type="checkbox" id="hide-viewers-toggle" checked onchange="toggleHideViewers(this.checked)">
+            <span class="toggle-slider"></span>
+          </div>
+          <span data-i18n="hide_viewers" style="font-weight: 600; font-size: 0.825rem;">Ukryj widzów 🙈</span>
+        </label>
+
+        <!-- Language Switcher -->
+        <div class="filter-presets">
+          <button id="lang-pl" class="filter-chip active" onclick="switchLanguage('PL')">PL</button>
+          <button id="lang-en" class="filter-chip" onclick="switchLanguage('EN')">EN</button>
+        </div>
+
+        <!-- Lock / Auth status -->
+        <button id="btn-auth-lock" class="btn btn-secondary btn-icon" title="Logowanie / Hasło" onclick="openAuthModal()">
+          🔒
+        </button>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs" style="margin-bottom: 1.5rem;">
+      <button class="nav-tab-btn active" id="tab-btn-overall" onclick="switchTab('overall')">
+        📊 <span data-i18n="tab_overall">Ogólne Statystyki</span>
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-user" onclick="switchTab('user')">
+        👤 <span data-i18n="tab_user">Śledzenie Widza</span>
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-streams" onclick="switchTab('streams')">
+        🎬 <span data-i18n="tab_streams">Historia Streamów</span>
+      </button>
+      <button class="nav-tab-btn" id="tab-btn-status" onclick="switchTab('status')">
+        ⚙️ <span data-i18n="tab_status">Status & O projekcie</span>
+      </button>
+    </nav>
+
+    <!-- Toolbar Filters (Dates & Toggles) -->
+    <section class="toolbar glass-panel" id="main-toolbar">
+      <div class="filter-presets" id="date-presets">
+        <button class="filter-chip" data-range="today" onclick="setDatePreset('today')" data-i18n="preset_today">Dziś</button>
+        <button class="filter-chip" data-range="7d" onclick="setDatePreset('7d')" data-i18n="preset_7d">7 Dni</button>
+        <button class="filter-chip active" data-range="30d" onclick="setDatePreset('30d')" data-i18n="preset_30d">30 Dni</button>
+        <button class="filter-chip" data-range="90d" onclick="setDatePreset('90d')" data-i18n="preset_90d">90 Dni</button>
+        <button class="filter-chip" data-range="all" onclick="setDatePreset('all')" data-i18n="preset_all">Wszystko</button>
+        <button class="filter-chip" id="chip-custom-date" onclick="openCustomDateModal()">📅 <span id="custom-date-label" data-i18n="preset_custom">Własny zakres</span></button>
+      </div>
+
+      <div class="toolbar-controls">
+        <label class="toggle-wrapper" id="staff-toggle-wrapper">
+          <div class="toggle-switch">
+            <input type="checkbox" id="hide-staff-toggle" onchange="toggleHideStaff(this.checked)">
+            <span class="toggle-slider"></span>
+          </div>
+          <span data-i18n="hide_staff">Ukryj Modów i VIP</span>
+        </label>
+
+        <button class="btn btn-secondary" onclick="exportTopUsersCSV()" title="Pobierz dane jako plik CSV">
+          📥 <span data-i18n="export_csv">Eksportuj CSV</span>
+        </button>
+
+        <button class="btn btn-secondary btn-icon" onclick="refreshCurrentTab()" title="Odśwież dane">
+          🔄
+        </button>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         TAB 1: OVERALL CHANNEL STATS
+         ========================================== -->
+    <main id="view-overall" class="tab-content active">
+      <!-- KPI Metric Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card glass-panel" style="--card-accent: var(--twitch-purple);">
+          <div class="kpi-header">
+            <span class="kpi-title" data-i18n="kpi_total_msgs">Suma Wiadomości</span>
+            <span class="kpi-icon">💬</span>
+          </div>
+          <div class="kpi-value" id="kpi-total-msgs">-</div>
+          <div class="kpi-subtitle" data-i18n="kpi_msgs_sub">W wybranym okresie</div>
+        </div>
+
+        <div class="kpi-card glass-panel" style="--card-accent: var(--accent-cyan);">
+          <div class="kpi-header">
+            <span class="kpi-title" data-i18n="kpi_unique_chatters">Unikalni Czatujący</span>
+            <span class="kpi-icon">👥</span>
+          </div>
+          <div class="kpi-value" id="kpi-unique-users">-</div>
+          <div class="kpi-subtitle" data-i18n="kpi_users_sub">Osoby aktywne na czacie</div>
+        </div>
+
+        <div class="kpi-card glass-panel" style="--card-accent: var(--accent-pink);">
+          <div class="kpi-header">
+            <span class="kpi-title" data-i18n="kpi_new_chatters">Nowi Użytkownicy</span>
+            <span class="kpi-icon">✨</span>
+          </div>
+          <div class="kpi-value" id="kpi-new-chatters">-</div>
+          <div class="kpi-subtitle" data-i18n="kpi_new_sub">Pierwsza wiadomość w historii</div>
+        </div>
+
+        <div class="kpi-card glass-panel" style="--card-accent: var(--accent-amber);">
+          <div class="kpi-header">
+            <span class="kpi-title" data-i18n="kpi_avg_viewers">Śr. Widzów Streamów</span>
+            <span class="kpi-icon">👁️</span>
+          </div>
+          <div class="kpi-value" id="kpi-avg-viewers">-</div>
+          <div class="kpi-subtitle" data-i18n="kpi_avg_v_sub">Z oficjalnego API Twitcha</div>
+        </div>
+
+        <div class="kpi-card glass-panel" style="--card-accent: var(--accent-emerald);">
+          <div class="kpi-header">
+            <span class="kpi-title" data-i18n="kpi_peak_viewers">Szczyt Widzów (Peak)</span>
+            <span class="kpi-icon">🚀</span>
+          </div>
+          <div class="kpi-value" id="kpi-peak-viewers">-</div>
+          <div class="kpi-subtitle" data-i18n="kpi_peak_sub">Maksimum w okresie</div>
+        </div>
+      </div>
+
+      <!-- Charts Row: Timeline & Hourly distribution -->
+      <div class="charts-grid-2-1">
+        <div class="chart-card glass-panel">
+          <div class="chart-header">
+            <h3 class="chart-title" data-i18n="chart_timeline_title">Aktywność Czatu w Czasie</h3>
+            <span class="kpi-subtitle" data-i18n="chart_timeline_sub">Wiadomości i unikalni czatujący</span>
+          </div>
+          <div class="chart-container">
+            <canvas id="canvas-timeline"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card glass-panel">
+          <div class="chart-header">
+            <h3 class="chart-title" data-i18n="chart_hourly_title">Rozkład Godzinowy</h3>
+            <span class="kpi-subtitle" data-i18n="chart_hourly_sub">Kiedy czat jest najaktywniejszy</span>
+          </div>
+          <div class="chart-container">
+            <canvas id="canvas-hourly"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top Chatters Leaderboard -->
+      <div class="table-card glass-panel">
+        <div class="chart-header">
+          <div>
+            <h3 class="chart-title" data-i18n="top_chatters_title">Najbardziej Aktywni Czatujący (Top 20)</h3>
+            <span class="kpi-subtitle" data-i18n="top_chatters_sub">Kliknij nick, aby otworzyć szczegółowy profil widza</span>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 60px;">#</th>
+                <th data-i18n="th_user">Widz</th>
+                <th data-i18n="th_role">Ranga</th>
+                <th data-i18n="th_messages">Wiadomości</th>
+                <th data-i18n="th_active_days">Aktywne Dni</th>
+                <th data-i18n="th_share">Udział w Czacie</th>
+                <th style="text-align: right;" data-i18n="th_action">Profil</th>
+              </tr>
+            </thead>
+            <tbody id="top-users-tbody">
+              <tr>
+                <td colspan="7" class="empty-state">
+                  <div class="loading-spinner"></div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <!-- ==========================================
+         TAB 2: USER INTELLIGENCE & TRACKING
+         ========================================== -->
+    <main id="view-user" class="tab-content">
+      <!-- Search bar -->
+      <div class="glass-panel" style="padding: 1.25rem; margin-bottom: 1.5rem;">
+        <div class="search-box">
+          <input type="text" id="user-search-input" class="input-field" list="users-datalist" placeholder="Wpisz nick widza (np. wojtek_banan)..." onkeydown="if(event.key==='Enter') searchSelectedUser()">
+          <datalist id="users-datalist"></datalist>
+          <button class="btn btn-primary" onclick="searchSelectedUser()" data-i18n="btn_search">Szukaj</button>
+        </div>
+      </div>
+
+      <!-- User Profile Container -->
+      <div id="user-details-wrapper" style="display: none;">
+        <!-- User Info Header -->
+        <div class="user-profile-header glass-panel">
+          <div class="user-avatar" id="u-avatar">?</div>
+          <div class="user-meta" style="flex-grow: 1;">
+            <h2>
+              <span id="u-name">-</span>
+              <span id="u-badges-container"></span>
+            </h2>
+            <div class="user-dates">
+              <span data-i18n="u_first_seen">Pierwszy raz na czacie:</span> <strong id="u-first-seen">-</strong> &bull; 
+              <span data-i18n="u_last_seen">Ostatnia wiadomość:</span> <strong id="u-last-seen">-</strong>
+            </div>
+          </div>
+          <div>
+            <button class="btn btn-secondary" onclick="exportUserMessagesCSV()">
+              📥 <span data-i18n="export_user_csv">Pobierz Historię (CSV)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 KPI Cards for User -->
+        <div class="kpi-grid">
+          <div class="kpi-card glass-panel" style="--card-accent: var(--twitch-purple);">
+            <div class="kpi-header">
+              <span class="kpi-title" data-i18n="u_total_msgs">Wiadomości (Okres)</span>
+              <span class="kpi-icon">💬</span>
+            </div>
+            <div class="kpi-value" id="u-period-msgs">-</div>
+            <div class="kpi-subtitle"><span data-i18n="u_all_time">Łącznie w bazie:</span> <strong id="u-alltime-msgs">-</strong></div>
+          </div>
+
+          <div class="kpi-card glass-panel" style="--card-accent: var(--accent-cyan);">
+            <div class="kpi-header">
+              <span class="kpi-title" data-i18n="u_active_days">Aktywne Dni</span>
+              <span class="kpi-icon">📅</span>
+            </div>
+            <div class="kpi-value" id="u-active-days">-</div>
+            <div class="kpi-subtitle" data-i18n="u_active_days_sub">Dni z wysłaną wiadomością</div>
+          </div>
+
+          <div class="kpi-card glass-panel" style="--card-accent: var(--accent-pink);">
+            <div class="kpi-header">
+              <span class="kpi-title" data-i18n="u_avg_daily">Śr. Wiadomości / Dzień</span>
+              <span class="kpi-icon">📈</span>
+            </div>
+            <div class="kpi-value" id="u-avg-daily">-</div>
+            <div class="kpi-subtitle" data-i18n="u_avg_daily_sub">Podczas aktywnych dni</div>
+          </div>
+
+          <div class="kpi-card glass-panel" style="--card-accent: var(--accent-emerald);">
+            <div class="kpi-header">
+              <span class="kpi-title" data-i18n="u_loyalty">Wskaźnik Lojalności</span>
+              <span class="kpi-icon">💎</span>
+            </div>
+            <div class="kpi-value" id="u-loyalty">-</div>
+            <div class="kpi-subtitle" id="u-loyalty-sub">Obecność na streamach</div>
+          </div>
+        </div>
+
+        <!-- User Timeline & Recent Messages -->
+        <div class="charts-grid-half">
+          <div class="chart-card glass-panel">
+            <div class="chart-header">
+              <h3 class="chart-title" data-i18n="u_chart_title">Aktywność Widza w Czasie</h3>
+            </div>
+            <div class="chart-container">
+              <canvas id="canvas-user-timeline"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card glass-panel">
+            <div class="chart-header">
+              <h3 class="chart-title" data-i18n="u_feed_title">Ostatnie Wiadomości</h3>
+              <span id="u-feed-count" class="kpi-subtitle">Ostatnie 50</span>
+            </div>
+            <div class="message-feed" id="user-messages-feed"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="user-placeholder" class="empty-state glass-panel">
+        <p style="font-size: 1.1rem; color: var(--text-secondary);" data-i18n="u_search_placeholder">
+          🔍 Wpisz nick widza powyżej lub kliknij na nick w tabeli Najaktywniejszych, aby sprawdzić profil.
+        </p>
+      </div>
+    </main>
+
+    <!-- ==========================================
+         TAB 3: STREAM ARCHIVE & HYPE ANALYTICS
+         ========================================== -->
+    <main id="view-streams" class="tab-content">
+      <div class="chart-header" style="margin-bottom: 1rem;">
+        <h2 style="font-family: 'Outfit'; font-size: 1.3rem;" data-i18n="streams_archive_title">Zarejestrowane Streamy</h2>
+        <span class="kpi-subtitle" data-i18n="streams_archive_sub">Wybierz sesję streama, aby zobaczyć szczegółową analizę oglądalności i hype'u</span>
+      </div>
+
+      <!-- Streams selector grid -->
+      <div class="streams-grid" id="streams-selector-grid">
+        <div class="loading-spinner"></div>
+      </div>
+
+      <!-- Stream Detail Panel -->
+      <div id="stream-detail-panel" style="display: none;">
+        <div class="chart-header" style="margin-bottom: 1.25rem;">
+          <div>
+            <h2 id="stream-detail-title" style="font-family: 'Outfit'; font-size: 1.5rem; display: flex; align-items: center; gap: 0.75rem;">
+              <span>Stream</span>
+              <span id="stream-live-badge" class="status-pill live" style="display: none;">NA ŻYWO</span>
+            </h2>
+            <div id="stream-detail-time" class="kpi-subtitle" style="margin-top: 0.25rem;">-</div>
+          </div>
+          <div id="stream-detail-duration" class="brand-channel-badge" style="font-size: 0.95rem; padding: 0.3rem 0.8rem;">-</div>
+        </div>
+
+        <!-- 6 KPI Cards for Stream -->
+        <div class="stream-kpi-grid">
+          <div class="kpi-card glass-panel" style="--card-accent: var(--twitch-purple);">
+            <div class="kpi-header"><span class="kpi-title" data-i18n="s_peak_viewers">Max Widzów (Peak)</span><span>🚀</span></div>
+            <div class="kpi-value" id="s-peak-v">-</div>
+            <div class="kpi-subtitle" data-i18n="s_peak_sub">Najwyższy punkt sesji</div>
+          </div>
+
+          <div class="kpi-card glass-panel" style="--card-accent: var(--accent-cyan);">
+            <div class="kpi-header"><span class="kpi-title" data-i18n="s_avg_viewers">Średnia Widzów</span><span>👁️</span></div>
+            <div class="kpi-value" id="s-avg-v">-</div>
+            <div class="kpi-subtitle" data-i18n="s_avg_sub">Średnia z próbek API</div>
+          </div>
+
+          <div class="kpi-card glass-panel" style="--card-accent: var(--accent-pink);">
+            <div class="kpi-header"><span class="kpi-title" data-i18n="s_total_msgs">Wiadomości</span><span>💬</span></div>
+            <div class="kpi-value" id="s-msgs">-</div>
+            <div class="kpi-subtitle" data-i18n="s_total_sub">Wszystkie z czatu</div>
+          </div>
+
+          <div class="kpi-card glass-panel" style="--card-accent: var(--accent-emerald);">
+            <div class="kpi-header"><span class="kpi-title" data-i18n="s_chatters">Unikalni Czatujący</span><span>🗣️</span></div>
+            <div class="kpi-value" id="s-chatters">-</div>
+            <div class="kpi-subtitle" data-i18n="s_chatters_sub">Aktywnych na czacie</div>
+          </div>
+
+          <div class="kpi-card glass-panel" style="--card-accent: var(--text-muted);">
+            <div class="kpi-header"><span class="kpi-title" data-i18n="s_lurkers">Szacowani Lurkerzy</span><span>👻</span></div>
+            <div class="kpi-value" id="s-lurkers">-</div>
+            <div class="kpi-subtitle" data-i18n="s_lurkers_sub">Śr. widzów bez wiadomości</div>
+          </div>
+
+          <div class="kpi-card glass-panel" style="--card-accent: #FF5722;">
+            <div class="kpi-header"><span class="kpi-title" data-i18n="s_hype">Szczyt Hype'u</span><span>🔥</span></div>
+            <div class="kpi-value" id="s-hype">-</div>
+            <div class="kpi-subtitle" id="s-hype-sub">Najgorętsza minuta</div>
+          </div>
+        </div>
+
+        <!-- Stream Charts: Viewership Curve & Lurkers vs Chatters -->
+        <div class="charts-grid-2-1" id="stream-viewers-charts-row">
+          <div class="chart-card glass-panel">
+            <div class="chart-header">
+              <h3 class="chart-title" data-i18n="s_viewers_curve">Przebieg Oglądalności w Czasie</h3>
+              <span class="kpi-subtitle" data-i18n="s_viewers_curve_sub">Liczba widzów co 2 minuty</span>
+            </div>
+            <div class="chart-container" id="container-stream-viewers">
+              <canvas id="canvas-stream-viewers"></canvas>
+              <div id="msg-stream-viewers-hidden" class="chart-hidden-overlay" style="display: none;">
+                <span class="hidden-overlay-icon">🙈</span>
+                <p class="hidden-overlay-title" data-i18n="s_viewers_hidden_chart">
+                  Wykres oglądalności jest ukryty (Tryb bezpieczny streamerki).
+                </p>
+                <span class="hidden-overlay-hint" data-i18n="s_viewers_hidden_hint">
+                  Możesz go odkryć przełącznikiem u góry strony.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="chart-card glass-panel">
+            <div class="chart-header">
+              <h3 class="chart-title" data-i18n="s_chatter_ratio">Czatujący vs Lurkerzy</h3>
+              <span class="kpi-subtitle" data-i18n="s_chatter_ratio_sub">Proporcja zaangażowania</span>
+            </div>
+            <div class="chart-container" id="container-stream-ratio">
+              <canvas id="canvas-stream-ratio"></canvas>
+              <div id="msg-stream-ratio-hidden" class="chart-hidden-overlay" style="display: none;">
+                <span class="hidden-overlay-icon">🙈</span>
+                <p class="hidden-overlay-title" data-i18n="s_ratio_hidden_chart">
+                  Proporcja widzów ukryta.
+                </p>
+                <span class="hidden-overlay-hint" data-i18n="s_viewers_hidden_hint">
+                  Możesz go odkryć przełącznikiem u góry strony.
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Row: Top Words / Emotes & Stream MVPs -->
+        <div class="charts-grid-half">
+          <div class="chart-card glass-panel">
+            <div class="chart-header">
+              <h3 class="chart-title" data-i18n="s_words_title">Top Słowa i Emotki na Streamie</h3>
+              <span class="kpi-subtitle" data-i18n="s_words_sub">Najczęściej używane na czacie</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="canvas-stream-words"></canvas>
+            </div>
+          </div>
+
+          <div class="table-card glass-panel" style="margin-bottom: 0;">
+            <div class="chart-header">
+              <h3 class="chart-title" data-i18n="s_mvp_title">Najbardziej Aktywni na Streamie</h3>
+              <span class="kpi-subtitle" data-i18n="s_mvp_sub">Liderzy czatu tej sesji</span>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th data-i18n="th_user">Widz</th>
+                    <th data-i18n="th_messages">Wiadomości</th>
+                  </tr>
+                </thead>
+                <tbody id="stream-mvps-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ==========================================
+         TAB 4: STATUS & DATABASE INFO
+         ========================================== -->
+    <main id="view-status" class="tab-content">
+      <div style="max-width: 820px; margin: 0 auto;">
+        <div class="chart-card glass-panel">
+          <div class="chart-header" style="margin-bottom: 1.5rem;">
+            <div>
+              <h3 class="chart-title" style="font-size: 1.25rem;">🖥️ Informacje o Serwerze & Bazie Danych</h3>
+              <span class="kpi-subtitle">Podgląd techniczny środowiska TwitchMetrics i magazynu SQLite</span>
+            </div>
+            <button class="btn btn-secondary btn-icon" onclick="checkStatus()" title="Odśwież status">🔄</button>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+            <div class="glass-panel" style="padding: 1.1rem 1.25rem; border-left: 3px solid var(--twitch-purple);">
+              <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 0.4rem;">Śledzony kanał Twitch</div>
+              <div id="sys-channel" style="font-size: 1.35rem; font-weight: 700; color: #fff;">-</div>
+            </div>
+
+            <div class="glass-panel" style="padding: 1.1rem 1.25rem; border-left: 3px solid var(--accent-cyan);">
+              <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 0.4rem;">Wiadomości w SQLite</div>
+              <div id="sys-msgs" style="font-size: 1.35rem; font-weight: 700; color: #fff;">-</div>
+            </div>
+
+            <div class="glass-panel" style="padding: 1.1rem 1.25rem; border-left: 3px solid var(--accent-pink);">
+              <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 0.4rem;">Zarejestrowane sesje</div>
+              <div id="sys-streams" style="font-size: 1.35rem; font-weight: 700; color: #fff;">-</div>
+            </div>
+
+            <div class="glass-panel" style="padding: 1.1rem 1.25rem; border-left: 3px solid var(--accent-amber);">
+              <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 0.4rem;">Rozmiar bazy SQLite</div>
+              <div id="sys-db-size" style="font-size: 1.35rem; font-weight: 700; color: #fff;">-</div>
+            </div>
+          </div>
+
+          <ul style="list-style: none; display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.925rem;">
+            <li class="glass-panel" style="padding: 0.85rem 1.25rem; display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: var(--text-secondary);">Ochrona hasłem (PANEL_PASSWORD):</span>
+              <strong id="sys-auth-status">-</strong>
+            </li>
+            <li class="glass-panel" style="padding: 0.85rem 1.25rem; display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: var(--text-secondary);">Tryb bazy danych:</span>
+              <span style="color: var(--accent-emerald); font-weight: 600;">SQLite WAL (Write-Ahead Logging)</span>
+            </li>
+            <li class="glass-panel" style="padding: 0.85rem 1.25rem; display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: var(--text-secondary);">Status bota śledzącego:</span>
+              <span style="display: inline-flex; align-items: center; gap: 0.45rem; color: var(--accent-emerald); font-weight: 600;">
+                <span class="pulse-dot" style="background-color: var(--accent-emerald);"></span> Aktywny w tle (24/7)
+              </span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Custom Date Modal -->
+  <div class="modal-overlay" id="custom-date-modal">
+    <div class="modal-box">
+      <h3 style="font-family: 'Outfit'; font-size: 1.3rem; margin-bottom: 1rem;" data-i18n="modal_date_title">Wybierz Własny Zakres Dat</h3>
+      <div style="display: flex; flex-direction: column; gap: 0.85rem; margin-bottom: 1.5rem;">
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;" data-i18n="modal_date_from">Data od:</label>
+          <input type="date" id="input-date-start" class="input-field" style="width: 100%;">
+        </div>
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;" data-i18n="modal_date_to">Data do:</label>
+          <input type="date" id="input-date-end" class="input-field" style="width: 100%;">
+        </div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+        <button class="btn btn-secondary" onclick="closeCustomDateModal()" data-i18n="btn_cancel">Anuluj</button>
+        <button class="btn btn-primary" onclick="applyCustomDates()" data-i18n="btn_apply">Zastosuj</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Password / Auth Modal -->
+  <div class="modal-overlay" id="auth-modal">
+    <div class="modal-box">
+      <h3 style="font-family: 'Outfit'; font-size: 1.3rem; margin-bottom: 0.5rem;" data-i18n="modal_auth_title">Panel Zabezpieczony Hasłem</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem;" data-i18n="modal_auth_desc">
+        Wprowadź hasło dostępu zdefiniowane w konfiguracji serwera, aby przeglądać statystyki czatu.
+      </p>
+      <div style="margin-bottom: 1.5rem;">
+        <input type="password" id="input-auth-password" class="input-field" style="width: 100%;" placeholder="Hasło..." onkeydown="if(event.key==='Enter') submitAuthPassword()">
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <button class="btn btn-secondary" id="btn-logout" style="display: none;" onclick="clearAuthPassword()" data-i18n="btn_logout">Wyloguj</button>
+        <div style="display: flex; gap: 0.75rem; margin-left: auto;">
+          <button class="btn btn-secondary" onclick="closeAuthModal()" data-i18n="btn_close">Zamknij</button>
+          <button class="btn btn-primary" onclick="submitAuthPassword()" data-i18n="btn_login">Zaloguj</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <!-- Main JavaScript Application -->
+  <script src="./app.js"></script>
+</body>
+</html>
