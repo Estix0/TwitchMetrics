@@ -301,6 +301,14 @@ function getDateQueryParams() {
 
 // Initialize Application
 window.addEventListener('DOMContentLoaded', async () => {
+  // Chart.js High-Performance Settings (prevents frame drops in Brave / OperaGX)
+  if (window.Chart) {
+    Chart.defaults.animation = { duration: 300, easing: 'easeOutQuart' };
+    Chart.defaults.responsive = true;
+    Chart.defaults.maintainAspectRatio = false;
+    Chart.defaults.resizeDelay = 100;
+  }
+
   // Load settings
   calculateDateRange('30d');
   document.getElementById('hide-staff-toggle').checked = state.hideStaff;
@@ -967,56 +975,63 @@ function renderStreamMvpTable(mvps) {
 }
 
 // -------------------------------------------------------------
-// CSV EXPORTS (Authenticated Blob Downloads)
+// CSV EXPORTS (Native & Resilient Downloads)
 // -------------------------------------------------------------
-async function downloadCSV(endpoint, filename) {
-  try {
-    showToast('Generowanie pliku CSV...', 'info');
-    const headers = {};
-    if (state.authPassword) {
-      headers['X-Panel-Password'] = state.authPassword;
-    }
-    const response = await fetch(`${API_BASE}${endpoint}`, { headers });
-    if (!response.ok) {
-      if (response.status === 401) {
-        openAuthModal();
-        throw new Error('Wymagane hasło dostępu do pobierania');
-      }
-      throw new Error(`Błąd HTTP ${response.status}`);
-    }
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-    showToast('Plik CSV pobrany pomyślnie!', 'success');
-  } catch (err) {
-    showToast(`Błąd eksportu CSV: ${err.message}`, 'error');
+function downloadCSV(endpoint, filename) {
+  if (state.authRequired && !state.authPassword) {
+    openAuthModal();
+    showToast('Wprowadź hasło dostępu, aby pobrać plik CSV', 'warning');
+    return;
   }
+
+  showToast('Rozpoczynanie pobierania CSV...', 'info');
+
+  let url = `${API_BASE}${endpoint}`;
+  if (state.authPassword && !url.includes('password=')) {
+    const sep = url.includes('?') ? '&' : '?';
+    url += `${sep}password=${encodeURIComponent(state.authPassword)}`;
+  }
+
+  // Native download trigger - works seamlessly in Brave, OperaGX, Chrome, Firefox
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = url;
+  if (filename) a.download = filename;
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+
+  setTimeout(() => {
+    if (a.parentNode) a.parentNode.removeChild(a);
+    showToast('Plik CSV został wygenerowany!', 'success');
+  }, 1200);
 }
 
 function exportTopUsersCSV() {
-  const staffParam = state.hideStaff ? '&hide_staff=true' : '';
-  const dateParams = getDateQueryParams();
-  const sep = dateParams.includes('?') ? '&' : '?';
-  const pwdParam = state.authPassword ? `&password=${encodeURIComponent(state.authPassword)}` : '';
-  const url = `/export/top_users${dateParams}${sep}limit=1000${staffParam}${pwdParam}`;
+  const params = new URLSearchParams();
+  if (state.startDate) params.append('start_date', state.startDate);
+  if (state.endDate) params.append('end_date', state.endDate);
+  if (state.hideStaff) params.append('hide_staff', 'true');
+  if (state.authPassword) params.append('password', state.authPassword);
+
+  const endpoint = `/export/top_users?${params.toString()}`;
   const filename = `top_chatters_${state.datePreset}_${state.channel || 'twitch'}.csv`;
-  downloadCSV(url, filename);
+  downloadCSV(endpoint, filename);
 }
 
 function exportUserMessagesCSV() {
-  if (!state.selectedUser) return;
-  const dateParams = getDateQueryParams();
-  const sep = dateParams.includes('?') ? '&' : '?';
-  const pwdParam = state.authPassword ? `${sep}password=${encodeURIComponent(state.authPassword)}` : '';
-  const url = `/export/user_messages/${encodeURIComponent(state.selectedUser)}${dateParams}${pwdParam}`;
+  if (!state.selectedUser) {
+    showToast('Wybierz lub wyszukaj widza, aby pobrać jego wiadomości!', 'warning');
+    return;
+  }
+  const params = new URLSearchParams();
+  if (state.startDate) params.append('start_date', state.startDate);
+  if (state.endDate) params.append('end_date', state.endDate);
+  if (state.authPassword) params.append('password', state.authPassword);
+
+  const endpoint = `/export/user_messages/${encodeURIComponent(state.selectedUser)}?${params.toString()}`;
   const filename = `messages_${state.selectedUser}.csv`;
-  downloadCSV(url, filename);
+  downloadCSV(endpoint, filename);
 }
 
 // -------------------------------------------------------------
