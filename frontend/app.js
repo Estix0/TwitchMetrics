@@ -226,11 +226,17 @@ function t(key) {
   return (I18N[state.lang] && I18N[state.lang][key]) || key;
 }
 
-// Custom Fetch with optional Password Header
+// Detect user's local timezone (fallback to Europe/Warsaw for Poland)
+const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Warsaw';
+
+// Custom Fetch with optional Password Header & Timezone
 async function fetchAPI(endpoint, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (state.authPassword) {
     headers['X-Panel-Password'] = state.authPassword;
+  }
+  if (clientTimezone) {
+    headers['X-Timezone'] = clientTimezone;
   }
 
   const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
@@ -262,30 +268,35 @@ function showToast(message, type = 'info') {
   }, 4000);
 }
 
-// Date Range Calculation
+// Date Range Calculation in Local Timezone
 function calculateDateRange(preset) {
   const now = new Date();
-  const format = d => d.toISOString().split('T')[0];
+  const formatLocal = d => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   state.datePreset = preset;
 
   if (preset === 'today') {
-    state.startDate = format(now);
-    state.endDate = format(now);
+    state.startDate = formatLocal(now);
+    state.endDate = formatLocal(now);
   } else if (preset === '7d') {
     const past = new Date();
     past.setDate(now.getDate() - 7);
-    state.startDate = format(past);
-    state.endDate = format(now);
+    state.startDate = formatLocal(past);
+    state.endDate = formatLocal(now);
   } else if (preset === '30d') {
     const past = new Date();
     past.setDate(now.getDate() - 30);
-    state.startDate = format(past);
-    state.endDate = format(now);
+    state.startDate = formatLocal(past);
+    state.endDate = formatLocal(now);
   } else if (preset === '90d') {
     const past = new Date();
     past.setDate(now.getDate() - 90);
-    state.startDate = format(past);
-    state.endDate = format(now);
+    state.startDate = formatLocal(past);
+    state.endDate = formatLocal(now);
   } else if (preset === 'all') {
     state.startDate = '';
     state.endDate = '';
@@ -297,6 +308,7 @@ function getDateQueryParams() {
   if (state.startDate) params.append('start_date', state.startDate);
   if (state.endDate) params.append('end_date', state.endDate);
   if (state.hideStaff) params.append('hide_staff', 'true');
+  if (clientTimezone) params.append('tz', clientTimezone);
   return params.toString() ? `?${params.toString()}` : '';
 }
 
@@ -407,6 +419,10 @@ async function checkStatus() {
     document.getElementById('sys-streams').innerText = data.total_streams || 0;
     document.getElementById('sys-db-size').innerText = `${data.db_size_mb || 0} MB`;
     document.getElementById('sys-auth-status').innerText = data.auth_required ? 'Włączona (hasło wymagane)' : 'Wyłączona (otwarty dostęp)';
+    const tzEl = document.getElementById('sys-timezone');
+    if (tzEl) {
+      tzEl.innerText = `${data.timezone || clientTimezone} (przeglądarka: ${clientTimezone})`;
+    }
 
     const logoutBtn = document.getElementById('btn-logout');
     if (state.authPassword) {
@@ -999,11 +1015,18 @@ async function downloadCSV(endpoint, defaultFilename) {
     if (state.authPassword) {
       headers['X-Panel-Password'] = state.authPassword;
     }
+    if (clientTimezone) {
+      headers['X-Timezone'] = clientTimezone;
+    }
 
     let url = `${API_BASE}${endpoint}`;
     if (state.authPassword && !url.includes('password=')) {
       const sep = url.includes('?') ? '&' : '?';
       url += `${sep}password=${encodeURIComponent(state.authPassword)}`;
+    }
+    if (clientTimezone && !url.includes('tz=')) {
+      const sep = url.includes('?') ? '&' : '?';
+      url += `${sep}tz=${encodeURIComponent(clientTimezone)}`;
     }
 
     const response = await fetch(url, { headers });

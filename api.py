@@ -3,7 +3,8 @@ import io
 import csv
 import sqlite3
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import zoneinfo
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 
@@ -47,6 +48,59 @@ def resolve_db_file():
 DB_FILE = resolve_db_file()
 CHANNEL = os.getenv("CHANNEL", "Streamer").strip().lstrip('#')
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "").strip()
+PANEL_TIMEZONE = os.getenv("PANEL_TIMEZONE", "Europe/Warsaw").strip()
+
+def get_target_timezone(
+    x_timezone: Optional[str] = Header(None, alias="X-Timezone"),
+    tz: Optional[str] = Query(None)
+) -> str:
+    """Resolve active timezone from query param, header, or system default."""
+    candidate = tz or x_timezone or PANEL_TIMEZONE
+    try:
+        zoneinfo.ZoneInfo(candidate)
+        return candidate
+    except Exception:
+        return PANEL_TIMEZONE
+
+def to_local_datetime(utc_str: Optional[str], tz_name: Optional[str] = None) -> Optional[str]:
+    if not utc_str:
+        return None
+    try:
+        target_tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
+        dt = datetime.fromisoformat(utc_str.replace(" ", "T")).replace(tzinfo=timezone.utc)
+        return dt.astimezone(target_tz).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return utc_str
+
+def to_local_date(utc_str: Optional[str], tz_name: Optional[str] = None) -> Optional[str]:
+    if not utc_str:
+        return None
+    try:
+        target_tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
+        dt = datetime.fromisoformat(utc_str.replace(" ", "T")).replace(tzinfo=timezone.utc)
+        return dt.astimezone(target_tz).strftime("%Y-%m-%d")
+    except Exception:
+        return utc_str
+
+def to_local_hour(utc_str: Optional[str], tz_name: Optional[str] = None) -> Optional[str]:
+    if not utc_str:
+        return None
+    try:
+        target_tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
+        dt = datetime.fromisoformat(utc_str.replace(" ", "T")).replace(tzinfo=timezone.utc)
+        return dt.astimezone(target_tz).strftime("%H")
+    except Exception:
+        return "00"
+
+def to_local_minute(utc_str: Optional[str], tz_name: Optional[str] = None) -> Optional[str]:
+    if not utc_str:
+        return None
+    try:
+        target_tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
+        dt = datetime.fromisoformat(utc_str.replace(" ", "T")).replace(tzinfo=timezone.utc)
+        return dt.astimezone(target_tz).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return utc_str
 
 # Polish & English common stop-words for cleaner emote/word stats
 STOP_WORDS = {
@@ -67,6 +121,10 @@ def get_db():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA busy_timeout=5000;")
+    conn.create_function("to_local", -1, to_local_datetime)
+    conn.create_function("local_date", -1, to_local_date)
+    conn.create_function("local_hour", -1, to_local_hour)
+    conn.create_function("local_minute", -1, to_local_minute)
     try:
         yield conn
     finally:
@@ -125,15 +183,37 @@ def verify_auth(
         detail="Wymagana autoryzacja lub nieprawidłowe hasło dostępu."
     )
 
-def build_date_filter(start_date: Optional[str], end_date: Optional[str], column: str = "created_at"):
+def build_date_filter(
+    start_date: Optional[str],
+    end_date: Optional[str],
+    column: str = "created_at",
+    tz_name: Optional[str] = None
+):
+    """
+    Constructs a SQL date filter. Converts client local dates to exact UTC bounds
+    to maintain 100% index utilization on SQLite created_at column.
+    """
     clause = "1=1"
     params = []
+    tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
     if start_date:
-        clause += f" AND {column} >= ?"
-        params.append(f"{start_date} 00:00:00")
+        try:
+            s_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=tz)
+            start_utc = s_dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            clause += f" AND {column} >= ?"
+            params.append(start_utc)
+        except Exception:
+            clause += f" AND {column} >= ?"
+            params.append(f"{start_date} 00:00:00")
     if end_date:
-        clause += f" AND {column} <= ?"
-        params.append(f"{end_date} 23:59:59")
+        try:
+            e_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=tz)
+            end_utc = e_dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            clause += f" AND {column} <= ?"
+            params.append(end_utc)
+        except Exception:
+            clause += f" AND {column} <= ?"
+            params.append(f"{end_date} 23:59:59")
     return clause, params
 
 class AuthRequest(BaseModel):
@@ -148,7 +228,7 @@ def check_auth(req: AuthRequest):
     raise HTTPException(status_code=401, detail="Nieprawidłowe hasło")
 
 @app.get("/api/status")
-def get_system_status():
+def get_system_status(target_tz: str = Depends(get_target_timezone)):
     """Returns general service status, live stream state, and DB overview."""
     db_size = 0
     if os.path.exists(DB_FILE):
@@ -180,7 +260,7 @@ def get_system_status():
 
                 current_stream = {
                     "stream_id": active_row["stream_id"],
-                    "start_time": active_row["start_time"],
+                    "start_time": to_local_datetime(active_row["start_time"], target_tz),
                     "viewer_count": latest_viewers
                 }
     except Exception as e:
@@ -189,6 +269,7 @@ def get_system_status():
     return {
         "channel": CHANNEL,
         "auth_required": bool(PANEL_PASSWORD),
+        "timezone": target_tz,
         "is_live": is_live,
         "current_stream": current_stream,
         "total_messages": total_msgs,
@@ -201,12 +282,13 @@ def get_overall_stats(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     hide_staff: bool = False,
+    target_tz: str = Depends(get_target_timezone),
     _: bool = Depends(verify_auth)
 ):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            date_clause, params = build_date_filter(start_date, end_date, "created_at")
+            date_clause, params = build_date_filter(start_date, end_date, "created_at", target_tz)
             
             staff_filter = ""
             if hide_staff:
@@ -219,18 +301,19 @@ def get_overall_stats(
             overview = cursor.fetchone()
 
             # New chatters in this period
+            new_date_clause, new_params = build_date_filter(start_date, end_date, 'first_seen', target_tz)
             cursor.execute(f"""
                 SELECT COUNT(*) FROM (
                     SELECT username, MIN(created_at) as first_seen 
                     FROM messages 
                     GROUP BY username
                 ) 
-                WHERE {build_date_filter(start_date, end_date, 'first_seen')[0]}
-            """, build_date_filter(start_date, end_date, 'first_seen')[1])
+                WHERE {new_date_clause}
+            """, new_params)
             new_chatters = cursor.fetchone()[0]
 
             # Stream viewer statistics for period
-            date_clause_stats, params_stats = build_date_filter(start_date, end_date, "timestamp")
+            date_clause_stats, params_stats = build_date_filter(start_date, end_date, "timestamp", target_tz)
             cursor.execute(f"""
                 SELECT AVG(viewer_count) as avg_viewers, MAX(viewer_count) as peak_viewers 
                 FROM stream_stats 
@@ -240,36 +323,36 @@ def get_overall_stats(
             avg_viewers = int(round(v_stats["avg_viewers"])) if v_stats and v_stats["avg_viewers"] is not None else 0
             peak_viewers = int(v_stats["peak_viewers"]) if v_stats and v_stats["peak_viewers"] is not None else 0
 
-            # Timeline of daily message volume and unique chatters
+            # Timeline of daily message volume and unique chatters (using local_date)
             cursor.execute(f"""
-                SELECT strftime('%Y-%m-%d', created_at) as date, 
+                SELECT local_date(created_at, ?) as date, 
                        COUNT(*) as count,
                        COUNT(DISTINCT username) as unique_chatters
                 FROM messages 
                 WHERE {full_filter}
                 GROUP BY date 
                 ORDER BY date ASC
-            """, params)
+            """, [target_tz] + params)
             timeline = [dict(row) for row in cursor.fetchall()]
 
-            # Hourly activity distribution (00 to 23)
+            # Hourly activity distribution (00 to 23 using local_hour)
             cursor.execute(f"""
-                SELECT strftime('%H', created_at) as hour, COUNT(*) as count 
+                SELECT local_hour(created_at, ?) as hour, COUNT(*) as count 
                 FROM messages 
                 WHERE {full_filter}
                 GROUP BY hour 
                 ORDER BY hour ASC
-            """, params)
+            """, [target_tz] + params)
             hourly_map = {f"{h:02d}": 0 for h in range(24)}
             for r in cursor.fetchall():
                 hourly_map[r["hour"]] = r["count"]
             hourly_distribution = [{"hour": k, "count": v} for k, v in sorted(hourly_map.items())]
 
-            # Top chatters
+            # Top chatters (using local_date for active_days)
             cursor.execute(f"""
                 SELECT username, 
                        COUNT(*) as count, 
-                       COUNT(DISTINCT strftime('%Y-%m-%d', created_at)) as active_days,
+                       COUNT(DISTINCT local_date(created_at, ?)) as active_days,
                        MAX(is_mod) as is_mod,
                        MAX(is_vip) as is_vip,
                        MAX(is_sub) as is_sub
@@ -278,7 +361,7 @@ def get_overall_stats(
                 GROUP BY username 
                 ORDER BY count DESC 
                 LIMIT 20
-            """, params)
+            """, [target_tz] + params)
             total_for_perc = overview["total_msgs"] or 1
             top_users = []
             for row in cursor.fetchall():
@@ -335,25 +418,26 @@ def get_user_stats(
     username: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    target_tz: str = Depends(get_target_timezone),
     _: bool = Depends(verify_auth)
 ):
     try:
         username = username.strip().lower()
         with get_db() as conn:
             cursor = conn.cursor()
-            date_clause, params = build_date_filter(start_date, end_date)
+            date_clause, params = build_date_filter(start_date, end_date, "created_at", target_tz)
             user_params = [username] + params
 
-            # Total and active days within date range
+            # Total and active days within date range (local_date)
             cursor.execute(f"""
                 SELECT COUNT(*) as total, 
-                       COUNT(DISTINCT strftime('%Y-%m-%d', created_at)) as active_days,
+                       COUNT(DISTINCT local_date(created_at, ?)) as active_days,
                        MAX(is_mod) as is_mod,
                        MAX(is_vip) as is_vip,
                        MAX(is_sub) as is_sub
                 FROM messages 
                 WHERE username = ? AND {date_clause}
-            """, user_params)
+            """, [target_tz] + user_params)
             stats = cursor.fetchone()
 
             # All-time messages & first seen / last seen
@@ -370,18 +454,19 @@ def get_user_stats(
             active_days = stats["active_days"] if stats else 0
             avg_msgs_per_day = round(total_msgs / active_days, 1) if active_days > 0 else 0
 
+            first_seen_raw = all_time["first_seen"] if all_time else None
+            last_seen_raw = all_time["last_seen"] if all_time else None
+
             # Loyalty Score: % of streams attended since first seen
             loyalty_score = 0
             streams_attended = 0
             total_streams = 0
-            first_seen = all_time["first_seen"] if all_time else None
-            last_seen = all_time["last_seen"] if all_time else None
 
-            if first_seen:
+            if first_seen_raw:
                 cursor.execute("""
                     SELECT COUNT(DISTINCT stream_id) FROM streams 
                     WHERE end_time >= ? OR end_time IS NULL OR start_time >= ?
-                """, (first_seen, first_seen))
+                """, (first_seen_raw, first_seen_raw))
                 total_streams = cursor.fetchone()[0] or 0
 
                 cursor.execute("SELECT COUNT(DISTINCT stream_id) FROM messages WHERE username = ? AND stream_id IS NOT NULL", (username,))
@@ -391,22 +476,22 @@ def get_user_stats(
                 if total_streams > 0:
                     loyalty_score = min(100, round((streams_attended / total_streams) * 100))
 
-            # Daily timeline for user
+            # Daily timeline for user using local_date
             cursor.execute(f"""
-                SELECT strftime('%Y-%m-%d', created_at) as date, COUNT(*) as count 
+                SELECT local_date(created_at, ?) as date, COUNT(*) as count 
                 FROM messages 
                 WHERE username = ? AND {date_clause}
                 GROUP BY date 
                 ORDER BY date ASC
-            """, user_params)
+            """, [target_tz] + user_params)
             timeline = [dict(row) for row in cursor.fetchall()]
 
-            # Recent 50 messages
+            # Recent 50 messages formatted with to_local
             cursor.execute(f"""
-                SELECT created_at, content, stream_id FROM messages 
+                SELECT to_local(created_at, ?) as created_at, content, stream_id FROM messages 
                 WHERE username = ? AND {date_clause}
-                ORDER BY created_at DESC LIMIT 50
-            """, user_params)
+                ORDER BY messages.created_at DESC LIMIT 50
+            """, [target_tz] + user_params)
             recent_msgs = [dict(row) for row in cursor.fetchall()]
 
             return {
@@ -415,8 +500,8 @@ def get_user_stats(
                 "all_time_msgs": all_time["all_time_total"] if all_time else 0,
                 "active_days": active_days,
                 "avg_msgs_per_day": avg_msgs_per_day,
-                "first_seen": first_seen,
-                "last_seen": last_seen,
+                "first_seen": to_local_datetime(first_seen_raw, target_tz),
+                "last_seen": to_local_datetime(last_seen_raw, target_tz),
                 "badges": {
                     "is_mod": bool(stats["is_mod"]) if stats else False,
                     "is_vip": bool(stats["is_vip"]) if stats else False,
@@ -439,28 +524,32 @@ def get_user_messages(
     end_date: Optional[str] = None,
     limit: int = 1000,
     offset: int = 0,
+    target_tz: str = Depends(get_target_timezone),
     _: bool = Depends(verify_auth)
 ):
     try:
         username = username.strip().lower()
         with get_db() as conn:
             cursor = conn.cursor()
-            date_clause, params = build_date_filter(start_date, end_date)
+            date_clause, params = build_date_filter(start_date, end_date, "created_at", target_tz)
             user_params = [username] + params + [limit, offset]
 
             cursor.execute(f"""
-                SELECT created_at, content, stream_id 
+                SELECT to_local(created_at, ?) as created_at, content, stream_id 
                 FROM messages 
                 WHERE username = ? AND {date_clause} 
-                ORDER BY created_at DESC
+                ORDER BY messages.created_at DESC
                 LIMIT ? OFFSET ?
-            """, user_params)
+            """, [target_tz] + user_params)
             return [dict(row) for row in cursor.fetchall()]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/streams")
-def get_streams_list(_: bool = Depends(verify_auth)):
+def get_streams_list(
+    target_tz: str = Depends(get_target_timezone),
+    _: bool = Depends(verify_auth)
+):
     """List all recorded streams with summary statistics."""
     try:
         with get_db() as conn:
@@ -498,7 +587,8 @@ def get_streams_list(_: bool = Depends(verify_auth)):
                 if start_dt and end_dt:
                     duration_min = max(1, int((end_dt - start_dt).total_seconds() / 60))
 
-                row["end_time"] = effective_end_str if not is_live else None
+                row["start_time"] = to_local_datetime(row["start_time"], target_tz)
+                row["end_time"] = to_local_datetime(effective_end_str, target_tz) if not is_live else None
                 row["is_live"] = is_live
                 row["duration_minutes"] = duration_min
                 streams.append(row)
@@ -508,7 +598,11 @@ def get_streams_list(_: bool = Depends(verify_auth)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/streams/{stream_id}")
-def get_stream_details(stream_id: int, _: bool = Depends(verify_auth)):
+def get_stream_details(
+    stream_id: int,
+    target_tz: str = Depends(get_target_timezone),
+    _: bool = Depends(verify_auth)
+):
     """Detailed analytics for a specific stream."""
     try:
         with get_db() as conn:
@@ -557,24 +651,24 @@ def get_stream_details(stream_id: int, _: bool = Depends(verify_auth)):
 
             est_lurkers = max(0, avg_viewers - unique_chatters)
 
-            # Peak hype minute
+            # Peak hype minute in local timezone
             cursor.execute("""
-                SELECT strftime('%Y-%m-%d %H:%M', created_at) as minute, COUNT(*) as count 
+                SELECT local_minute(created_at, ?) as minute, COUNT(*) as count 
                 FROM messages 
                 WHERE stream_id = ? 
                 GROUP BY minute 
                 ORDER BY count DESC LIMIT 1
-            """, (stream_id,))
+            """, (target_tz, stream_id))
             hype_row = cursor.fetchone()
             peak_hype = {"minute": hype_row["minute"], "count": hype_row["count"]} if hype_row else {"minute": "-", "count": 0}
 
-            # Viewers timeline
+            # Viewers timeline with to_local
             cursor.execute("""
-                SELECT timestamp, viewer_count, chat_connections 
+                SELECT to_local(timestamp, ?) as timestamp, viewer_count, chat_connections 
                 FROM stream_stats 
                 WHERE stream_id = ? 
                 ORDER BY timestamp ASC
-            """, (stream_id,))
+            """, (target_tz, stream_id))
             viewers_timeline = [dict(r) for r in cursor.fetchall()]
 
             # Top words / emotes
@@ -617,8 +711,8 @@ def get_stream_details(stream_id: int, _: bool = Depends(verify_auth)):
 
             return {
                 "stream_id": stream_id,
-                "start_time": stream_info["start_time"],
-                "end_time": effective_end_str if not is_live else None,
+                "start_time": to_local_datetime(stream_info["start_time"], target_tz),
+                "end_time": to_local_datetime(effective_end_str, target_tz) if not is_live else None,
                 "is_live": is_live,
                 "duration_formatted": duration_str,
                 "peak_viewers": peak_viewers,
@@ -642,23 +736,24 @@ def export_top_users_csv(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     hide_staff: bool = False,
+    target_tz: str = Depends(get_target_timezone),
     _: bool = Depends(verify_auth)
 ):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            date_clause, params = build_date_filter(start_date, end_date)
+            date_clause, params = build_date_filter(start_date, end_date, "created_at", target_tz)
             staff_filter = " AND (is_mod = 0 OR is_mod IS NULL) AND (is_vip = 0 OR is_vip IS NULL)" if hide_staff else ""
 
             cursor.execute(f"""
                 SELECT username, COUNT(*) as message_count, 
-                       COUNT(DISTINCT strftime('%Y-%m-%d', created_at)) as active_days,
+                       COUNT(DISTINCT local_date(created_at, ?)) as active_days,
                        MAX(is_mod) as is_mod, MAX(is_vip) as is_vip, MAX(is_sub) as is_sub
                 FROM messages 
                 WHERE {date_clause} {staff_filter}
                 GROUP BY username 
                 ORDER BY message_count DESC
-            """, params)
+            """, [target_tz] + params)
 
             output = io.StringIO()
             output.write('\ufeff')  # UTF-8 BOM for Excel compatibility
@@ -684,20 +779,21 @@ def export_user_messages_csv(
     username: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    target_tz: str = Depends(get_target_timezone),
     _: bool = Depends(verify_auth)
 ):
     try:
         username = username.strip().lower()
         with get_db() as conn:
             cursor = conn.cursor()
-            date_clause, params = build_date_filter(start_date, end_date)
-            user_params = [username] + params
+            date_clause, params = build_date_filter(start_date, end_date, "created_at", target_tz)
+            user_params = [target_tz, username] + params
 
             cursor.execute(f"""
-                SELECT created_at, stream_id, content 
+                SELECT to_local(created_at, ?) as created_at, stream_id, content 
                 FROM messages 
                 WHERE username = ? AND {date_clause}
-                ORDER BY created_at ASC
+                ORDER BY messages.created_at ASC
             """, user_params)
 
             output = io.StringIO()
