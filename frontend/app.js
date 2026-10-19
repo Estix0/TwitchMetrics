@@ -12,6 +12,7 @@ const state = {
   endDate: null,
   hideStaff: localStorage.getItem('tm_hide_staff') === 'true',
   hideViewers: localStorage.getItem('tm_hide_viewers') !== 'false', // Default is TRUE (streamer safe mode)
+  authRequired: false,
   authPassword: localStorage.getItem('tm_auth_pwd') || '',
   selectedUser: null,
   selectedStreamId: null,
@@ -381,6 +382,7 @@ async function checkStatus() {
     const data = await fetchAPI('/status');
     state.channel = data.channel || 'Streamer';
     state.isLive = data.is_live;
+    state.authRequired = !!data.auth_required;
 
     document.getElementById('channel-name-display').innerText = state.channel;
     document.getElementById('streamer-link').href = `https://twitch.tv/${state.channel}`;
@@ -981,34 +983,70 @@ function renderStreamMvpTable(mvps) {
 }
 
 // -------------------------------------------------------------
-// CSV EXPORTS (Native & Resilient Downloads)
+// CSV EXPORTS (Native & Resilient Downloads via Fetch + Blob)
 // -------------------------------------------------------------
-function downloadCSV(endpoint, filename) {
+async function downloadCSV(endpoint, defaultFilename) {
   if (state.authRequired && !state.authPassword) {
     openAuthModal();
     showToast('Wprowadź hasło dostępu, aby pobrać plik CSV', 'warning');
     return;
   }
 
-  showToast('Rozpoczynanie pobierania CSV...', 'info');
+  showToast('Generowanie pliku CSV...', 'info');
 
-  let url = `${API_BASE}${endpoint}`;
-  if (state.authPassword && !url.includes('password=')) {
-    const sep = url.includes('?') ? '&' : '?';
-    url += `${sep}password=${encodeURIComponent(state.authPassword)}`;
+  try {
+    const headers = {};
+    if (state.authPassword) {
+      headers['X-Panel-Password'] = state.authPassword;
+    }
+
+    let url = `${API_BASE}${endpoint}`;
+    if (state.authPassword && !url.includes('password=')) {
+      const sep = url.includes('?') ? '&' : '?';
+      url += `${sep}password=${encodeURIComponent(state.authPassword)}`;
+    }
+
+    const response = await fetch(url, { headers });
+
+    if (response.status === 401) {
+      openAuthModal();
+      showToast('Wymagane poprawne hasło dostępu (błąd 401). Zaloguj się.', 'error');
+      return;
+    }
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Błąd serwera (${response.status}): ${errText}`);
+    }
+
+    // Determine filename from response header or default
+    let filename = defaultFilename;
+    const disposition = response.headers.get('Content-Disposition');
+    if (disposition && disposition.includes('filename=')) {
+      const match = disposition.match(/filename=["']?([^"';]+)["']?/);
+      if (match && match[1]) filename = match[1];
+    }
+
+    const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+
+    setTimeout(() => {
+      window.URL.revokeObjectURL(blobUrl);
+      if (a.parentNode) a.parentNode.removeChild(a);
+    }, 45000);
+
+    showToast('Plik CSV został pomyślnie pobrany!', 'success');
+  } catch (err) {
+    console.error('Błąd pobierania CSV:', err);
+    showToast(`Błąd pobierania CSV: ${err.message}`, 'error');
   }
-
-  // Direct anchor download without target=_blank (prevents popup blocker in Brave)
-  const a = document.createElement('a');
-  a.style.display = 'none';
-  a.href = url;
-  if (filename) a.setAttribute('download', filename);
-  document.body.appendChild(a);
-  a.click();
-
-  setTimeout(() => {
-    if (a.parentNode) a.parentNode.removeChild(a);
-  }, 1000);
 }
 
 function exportTopUsersCSV() {
@@ -1016,7 +1054,6 @@ function exportTopUsersCSV() {
   if (state.startDate) params.append('start_date', state.startDate);
   if (state.endDate) params.append('end_date', state.endDate);
   if (state.hideStaff) params.append('hide_staff', 'true');
-  if (state.authPassword) params.append('password', state.authPassword);
 
   const endpoint = `/export/top_users?${params.toString()}`;
   const filename = `top_chatters_${state.datePreset}_${state.channel || 'twitch'}.csv`;
@@ -1031,7 +1068,6 @@ function exportUserMessagesCSV() {
   const params = new URLSearchParams();
   if (state.startDate) params.append('start_date', state.startDate);
   if (state.endDate) params.append('end_date', state.endDate);
-  if (state.authPassword) params.append('password', state.authPassword);
 
   const endpoint = `/export/user_messages/${encodeURIComponent(state.selectedUser)}?${params.toString()}`;
   const filename = `messages_${state.selectedUser}.csv`;

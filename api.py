@@ -31,6 +31,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 def resolve_db_file():
@@ -667,10 +668,13 @@ def export_top_users_csv(
                 writer.writerow([r["username"], r["message_count"], r["active_days"], r["is_mod"], r["is_vip"], r["is_sub"]])
 
             output.seek(0)
-            return StreamingResponse(
-                iter([output.getvalue()]),
+            return Response(
+                content=output.getvalue(),
                 media_type="text/csv; charset=utf-8",
-                headers={"Content-Disposition": f"attachment; filename=top_chatters_{start_date or 'all'}_{end_date or 'all'}.csv"}
+                headers={
+                    "Content-Disposition": f"attachment; filename=top_chatters_{start_date or 'all'}_{end_date or 'all'}.csv",
+                    "Access-Control-Expose-Headers": "Content-Disposition"
+                }
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -704,10 +708,13 @@ def export_user_messages_csv(
                 writer.writerow([r["created_at"], r["stream_id"], r["content"]])
 
             output.seek(0)
-            return StreamingResponse(
-                iter([output.getvalue()]),
+            return Response(
+                content=output.getvalue(),
                 media_type="text/csv; charset=utf-8",
-                headers={"Content-Disposition": f"attachment; filename=messages_{username}.csv"}
+                headers={
+                    "Content-Disposition": f"attachment; filename=messages_{username}.csv",
+                    "Access-Control-Expose-Headers": "Content-Disposition"
+                }
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
