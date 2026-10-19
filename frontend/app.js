@@ -301,13 +301,13 @@ function getDateQueryParams() {
 
 // Initialize Application
 window.addEventListener('DOMContentLoaded', async () => {
-  // Chart.js High-Performance Settings (Zero lag in Brave / OperaGX / Chromium)
+  // Chart.js High-Performance Settings (Zero lag even in CPU/software rasterization)
   if (window.Chart) {
     Chart.defaults.animation = false; // Disable heavy canvas tweening
     Chart.defaults.responsive = true;
     Chart.defaults.maintainAspectRatio = false;
-    Chart.defaults.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
-    Chart.defaults.resizeDelay = 150;
+    Chart.defaults.devicePixelRatio = 1; // 1:1 pixel mapping for ultra-fast CPU rasterization
+    Chart.defaults.resizeDelay = 200;
     Chart.defaults.hover.animationDuration = 0;
     Chart.defaults.plugins.tooltip.animation = false;
   }
@@ -512,10 +512,6 @@ function renderTimelineChart(timeline) {
   const msgCounts = timeline.map(item => item.count);
   const userCounts = timeline.map(item => item.unique_chatters);
 
-  const purpleGrad = ctx.createLinearGradient(0, 0, 0, 260);
-  purpleGrad.addColorStop(0, 'rgba(145, 70, 255, 0.45)');
-  purpleGrad.addColorStop(1, 'rgba(145, 70, 255, 0.02)');
-
   state.charts.timeline = new Chart(ctx, {
     type: 'line',
     data: {
@@ -525,12 +521,12 @@ function renderTimelineChart(timeline) {
           label: t('chart_msgs'),
           data: msgCounts,
           borderColor: '#9146FF',
-          backgroundColor: purpleGrad,
+          backgroundColor: 'rgba(145, 70, 255, 0.12)',
           fill: true,
-          tension: 0.25,
+          tension: 0.15,
           borderWidth: 2,
           pointRadius: 0,
-          pointHoverRadius: 5,
+          pointHoverRadius: 4,
           spanGaps: true,
           normalized: true
         },
@@ -540,10 +536,10 @@ function renderTimelineChart(timeline) {
           borderColor: '#00E6CB',
           borderDash: [4, 4],
           fill: false,
-          tension: 0.25,
+          tension: 0.15,
           borderWidth: 2,
           pointRadius: 0,
-          pointHoverRadius: 5,
+          pointHoverRadius: 4,
           spanGaps: true,
           normalized: true
         }
@@ -878,12 +874,12 @@ function renderStreamViewersChart(timeline) {
         label: t('chart_viewers'),
         data: viewers,
         borderColor: '#9146FF',
-        backgroundColor: 'rgba(145, 70, 255, 0.25)',
+        backgroundColor: 'rgba(145, 70, 255, 0.12)',
         fill: true,
-        tension: 0.25,
+        tension: 0.15,
         borderWidth: 2,
         pointRadius: 0,
-        pointHoverRadius: 5,
+        pointHoverRadius: 4,
         spanGaps: true,
         normalized: true
       }]
