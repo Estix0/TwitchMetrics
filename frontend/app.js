@@ -301,12 +301,15 @@ function getDateQueryParams() {
 
 // Initialize Application
 window.addEventListener('DOMContentLoaded', async () => {
-  // Chart.js High-Performance Settings (prevents frame drops in Brave / OperaGX)
+  // Chart.js High-Performance Settings (Zero lag in Brave / OperaGX / Chromium)
   if (window.Chart) {
-    Chart.defaults.animation = { duration: 300, easing: 'easeOutQuart' };
+    Chart.defaults.animation = false; // Disable heavy canvas tweening
     Chart.defaults.responsive = true;
     Chart.defaults.maintainAspectRatio = false;
-    Chart.defaults.resizeDelay = 100;
+    Chart.defaults.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    Chart.defaults.resizeDelay = 150;
+    Chart.defaults.hover.animationDuration = 0;
+    Chart.defaults.plugins.tooltip.animation = false;
   }
 
   // Load settings
@@ -524,10 +527,12 @@ function renderTimelineChart(timeline) {
           borderColor: '#9146FF',
           backgroundColor: purpleGrad,
           fill: true,
-          tension: 0.35,
-          borderWidth: 2.5,
-          pointRadius: labels.length > 40 ? 0 : 3,
-          pointHoverRadius: 6
+          tension: 0.25,
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 5,
+          spanGaps: true,
+          normalized: true
         },
         {
           label: t('chart_unique'),
@@ -535,10 +540,12 @@ function renderTimelineChart(timeline) {
           borderColor: '#00E6CB',
           borderDash: [4, 4],
           fill: false,
-          tension: 0.3,
+          tension: 0.25,
           borderWidth: 2,
           pointRadius: 0,
-          pointHoverRadius: 5
+          pointHoverRadius: 5,
+          spanGaps: true,
+          normalized: true
         }
       ]
     },
@@ -873,9 +880,12 @@ function renderStreamViewersChart(timeline) {
         borderColor: '#9146FF',
         backgroundColor: 'rgba(145, 70, 255, 0.25)',
         fill: true,
-        tension: 0.35,
-        borderWidth: 2.5,
-        pointRadius: labels.length > 50 ? 0 : 2
+        tension: 0.25,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        spanGaps: true,
+        normalized: true
       }]
     },
     options: {
@@ -992,19 +1002,17 @@ function downloadCSV(endpoint, filename) {
     url += `${sep}password=${encodeURIComponent(state.authPassword)}`;
   }
 
-  // Native download trigger - works seamlessly in Brave, OperaGX, Chrome, Firefox
+  // Direct anchor download without target=_blank (prevents popup blocker in Brave)
   const a = document.createElement('a');
   a.style.display = 'none';
   a.href = url;
-  if (filename) a.download = filename;
-  a.target = '_blank';
+  if (filename) a.setAttribute('download', filename);
   document.body.appendChild(a);
   a.click();
 
   setTimeout(() => {
     if (a.parentNode) a.parentNode.removeChild(a);
-    showToast('Plik CSV został wygenerowany!', 'success');
-  }, 1200);
+  }, 1000);
 }
 
 function exportTopUsersCSV() {

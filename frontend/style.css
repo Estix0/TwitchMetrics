@@ -52,6 +52,10 @@ html {
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background-color: var(--bg-dark);
+  background-image: 
+    radial-gradient(circle at 15% 10%, rgba(145, 70, 255, 0.08) 0%, transparent 45%),
+    radial-gradient(circle at 85% 85%, rgba(0, 230, 203, 0.05) 0%, transparent 45%);
+  background-repeat: no-repeat;
   color: var(--text-primary);
   min-height: 100vh;
   line-height: 1.5;
@@ -61,33 +65,17 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Hardware-accelerated background without scroll-repaint (Zero GPU lag) */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  background-image: 
-    radial-gradient(circle at 15% 10%, rgba(145, 70, 255, 0.11) 0%, transparent 45%),
-    radial-gradient(circle at 85% 85%, rgba(0, 230, 203, 0.07) 0%, transparent 45%);
-  transform: translateZ(0);
-}
-
-/* High-Performance Surface Utility */
+/* High-Performance Surface Utility - No Layer Explosion */
 .glass-panel {
   background: var(--bg-card);
   border: 1px solid var(--bg-card-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  transition: border-color var(--transition-fast), background var(--transition-fast);
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: border-color var(--transition-fast);
 }
 
 .glass-panel:hover {
   border-color: rgba(255, 255, 255, 0.16);
-  background: var(--bg-card-hover);
 }
 
 /* Container */
@@ -948,7 +936,7 @@ body::before {
   border: 1px dashed rgba(255, 255, 255, 0.2);
 }
 
-/* Chart Hidden State Overlay */
+/* Chart Hidden State Overlay - Zero GPU overhead */
 .chart-hidden-overlay {
   position: absolute;
   inset: 0;
@@ -958,8 +946,7 @@ body::before {
   justify-content: center;
   text-align: center;
   padding: 1.5rem;
-  background: rgba(18, 18, 23, 0.55);
-  backdrop-filter: blur(8px);
+  background: #131318;
   border-radius: var(--radius-sm);
   z-index: 10;
 }
