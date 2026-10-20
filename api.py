@@ -817,7 +817,7 @@ def export_user_messages_csv(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
-# STREAM GAMES & INTERACTIVE ADDONS (Quiz & Hangman "Wybraniec Czatu")
+# STREAM TOOLS & INTERACTIVE ADDONS (Quiz & Hangman "Chatter")
 # ============================================================================
 
 GAME_STATE: Dict[str, Any] = {
@@ -919,7 +919,7 @@ def reset_game_state(mode: Optional[str] = Query(None), _: bool = Depends(verify
 def get_active_chatters(minutes: int = Query(2, ge=1, le=60)):
     """
     Get chatters who sent messages in the last N minutes.
-    Used for 'Wybraniec Czatu' mechanic in Hangman.
+    Used for 'Chatter' mechanic in Hangman.
     Falls back to recent stream chatters if stream/chat has been quiet.
     """
     try:
@@ -1016,13 +1016,13 @@ def simulate_chat_message(payload: SimulateMessagePayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/games/quiz/export")
-def export_quiz_results(data: Dict[str, Any], _: bool = Depends(verify_auth)):
+def export_quiz_results(data: Dict[str, Any]):
     """Export current quiz session scores to CSV with Excel compatibility."""
     try:
         leaderboard = data.get("leaderboard", [])
         output = io.StringIO()
         output.write('\ufeff')  # UTF-8 BOM
-        writer = csv.writer(output)
+        writer = csv.writer(output, delimiter=';')
         writer.writerow(["Pozycja", "Widz (Nick)", "Punkty", "Poprawne Odpowiedzi", "Skuteczność (%)"])
         for idx, entry in enumerate(leaderboard, 1):
             writer.writerow([

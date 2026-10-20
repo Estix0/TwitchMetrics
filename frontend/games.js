@@ -12,7 +12,6 @@ const state = {
   targetGame: new URLSearchParams(window.location.search).get('game') || 'quiz',
   channel: 'Streamer',
   authPassword: localStorage.getItem('tm_auth_pwd') || new URLSearchParams(window.location.search).get('password') || '',
-  soundEnabled: localStorage.getItem('tm_games_sound') !== 'false',
   latestMsgId: 0,
   pollTimer: null,
   activeChatters: [],
@@ -48,7 +47,7 @@ const state = {
     livesLeft: 6,
     maxLives: 6,
     state: 'idle', // 'idle' | 'playing' | 'won' | 'lost'
-    turnMode: 'chatter', // 'chatter' (Wybraniec) | 'all' (Czat Razem)
+    turnMode: 'chatter', // 'chatter' (Chatter) | 'all' (Czat Razem)
     activeChatter: null,
     activeChatterInfo: null,
     turnTimer: 45,
@@ -60,113 +59,11 @@ const state = {
 
 const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000/api' : '/api';
 
-// ============================================================================
-// AUDIO SYNTHESIZER (Web Audio API - Offline & Stream Safe)
-// ============================================================================
-let audioCtx = null;
-
-function getAudioContext() {
-  if (!audioCtx) {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) audioCtx = new AudioContextClass();
-  }
-  if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
-  return audioCtx;
-}
-
-function playSuccessChime() {
-  if (!state.soundEnabled) return;
-  try {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    [523.25, 659.25, 783.99].forEach((freq, idx) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, now + idx * 0.08);
-      gain.gain.setValueAtTime(0.18, now + idx * 0.08);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.32);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + idx * 0.08);
-      osc.stop(now + idx * 0.08 + 0.33);
-    });
-  } catch (e) {}
-}
-
-function playErrorBuzzer() {
-  if (!state.soundEnabled) return;
-  try {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(140, now);
-    osc.frequency.setValueAtTime(110, now + 0.15);
-    gain.gain.setValueAtTime(0.15, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.33);
-  } catch (e) {}
-}
-
-function playTickSound(freq = 800) {
-  if (!state.soundEnabled) return;
-  try {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(freq, now);
-    gain.gain.setValueAtTime(0.06, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.06);
-  } catch (e) {}
-}
-
-function playFanfare() {
-  if (!state.soundEnabled) return;
-  try {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    [392.00, 523.25, 659.25, 783.99, 1046.50].forEach((f, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(f, now + i * 0.12);
-      gain.gain.setValueAtTime(0.2, now + i * 0.12);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.45);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + i * 0.12);
-      osc.stop(now + i * 0.12 + 0.48);
-    });
-  } catch (e) {}
-}
-
-function toggleAudio() {
-  state.soundEnabled = !state.soundEnabled;
-  localStorage.setItem('tm_games_sound', state.soundEnabled ? 'true' : 'false');
-  const btn = document.getElementById('btn-audio-toggle');
-  if (btn) {
-    btn.innerText = state.soundEnabled ? '🔊' : '🔇';
-    btn.title = state.soundEnabled ? 'Dźwięki (włączone)' : 'Dźwięki (wyłączone)';
-  }
-  showToast(state.soundEnabled ? 'Dźwięki włączone' : 'Dźwięki wyciszone', 'info');
-}
+// Audio sounds disabled per streamer preference
+function playSuccessChime() {}
+function playErrorBuzzer() {}
+function playTickSound() {}
+function playFanfare() {}
 
 // ============================================================================
 // CANVAS CONFETTI (Celebration Generator)
@@ -1205,14 +1102,12 @@ function assignTurnToChatter(username) {
     if (timerCircle) timerCircle.innerText = state.hangman.turnTimer;
     if (state.hangman.turnTimer <= 0) {
       clearInterval(state.hangman.turnInterval);
-      showToast(`Czas gracza @${username} minął! Losuję kolejną osobę.`, 'warning');
-      playErrorBuzzer();
+      showToast(`Czas chatera @${username} minął! Losuję kolejną osobę.`, 'warning');
       rollActiveChatter();
     }
   }, 1000);
 
-  playSuccessChime();
-  showToast(`🎲 Tura gracza: @${username}! Czekam na literkę na czacie...`, 'info');
+  showToast(`🎲 Tura chatera: @${username}! Czekam na literkę na czacie...`, 'info');
   broadcastSync('HANGMAN_UPDATE', state.hangman);
 }
 
@@ -1225,7 +1120,7 @@ function skipActiveChatter() {
 function toggleTurnMode() {
   state.hangman.turnMode = state.hangman.turnMode === 'chatter' ? 'all' : 'chatter';
   updateTurnModeUI();
-  showToast(`Zmieniono tryb na: ${state.hangman.turnMode === 'chatter' ? 'Wybraniec Czatu' : 'Czat Zgaduje Razem'}`, 'info');
+  showToast(`Zmieniono tryb na: ${state.hangman.turnMode === 'chatter' ? 'Chatter' : 'Czat Zgaduje Razem'}`, 'info');
   broadcastSync('HANGMAN_UPDATE', state.hangman);
 }
 
@@ -1234,7 +1129,7 @@ function updateTurnModeUI() {
   const banner = document.getElementById('hangman-chatter-banner');
 
   if (state.hangman.turnMode === 'chatter') {
-    if (btn) btn.innerText = '👤 Tryb: Wybraniec';
+    if (btn) btn.innerText = '👤 Tryb: Chatter';
     if (banner) banner.style.display = 'flex';
   } else {
     if (btn) btn.innerText = '👥 Tryb: Czat Razem';
@@ -1425,31 +1320,17 @@ async function exportQuizCSV() {
     return;
   }
 
-  showToast("Generowanie pliku Excel / CSV...", "info");
-
   try {
-    const formatted = entries.map(e => ({
-      username: e.username,
-      score: e.score,
-      correct_answers: e.correctQuiz + e.correctLetters,
-      accuracy: 100
-    }));
-
-    const headers = { 'Content-Type': 'application/json' };
-    if (state.authPassword) headers['X-Panel-Password'] = state.authPassword;
-
-    let url = `${API_BASE}/games/quiz/export`;
-    if (state.authPassword) url += `?password=${encodeURIComponent(state.authPassword)}`;
-
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ leaderboard: formatted })
+    // Generate CSV directly on client with UTF-8 BOM and semicolon delimiter (Polish/European Excel friendly)
+    let csvContent = '\uFEFF';
+    csvContent += 'Pozycja;Widz (Nick);Punkty;Poprawne Odpowiedzi;Skuteczność (%)\r\n';
+    entries.forEach((e, idx) => {
+      const correct = (e.correctQuiz || 0) + (e.correctLetters || 0);
+      const safeNick = (e.username || '').replace(/"/g, '""');
+      csvContent += `${idx + 1};"${safeNick}";${e.score || 0};${correct};100%\r\n`;
     });
 
-    if (!res.ok) throw new Error(`Błąd HTTP ${res.status}`);
-
-    const blob = await res.blob();
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const blobUrl = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
@@ -1461,7 +1342,7 @@ async function exportQuizCSV() {
       a.remove();
     }, 45000);
 
-    showToast("Plik CSV został pomyślnie pobrany!", "success");
+    showToast("Plik CSV został pomyślnie wygenerowany i pobrany!", "success");
   } catch (err) {
     showToast(`Błąd eksportu: ${err.message}`, "error");
   }
