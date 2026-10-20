@@ -983,6 +983,16 @@ body.overlay-mode .games-container {
   justify-content: center !important;
 }
 
+body.overlay-mode .game-view-content {
+  width: 100% !important;
+  max-width: 1100px !important;
+  display: none !important;
+}
+
+body.overlay-mode .game-view-content.active {
+  display: block !important;
+}
+
 body.overlay-mode .game-grid-host {
   grid-template-columns: 1fr !important;
   width: 100% !important;

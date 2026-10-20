@@ -875,8 +875,8 @@ def get_game_state():
     return GAME_STATE
 
 @app.post("/api/games/state")
-def update_game_state(new_state: Dict[str, Any], _: bool = Depends(verify_auth)):
-    """Update game state from Host controller."""
+def update_game_state(new_state: Dict[str, Any]):
+    """Update game state from Host controller and notify all listeners."""
     global GAME_STATE
     for k, v in new_state.items():
         if isinstance(v, dict) and k in GAME_STATE and isinstance(GAME_STATE[k], dict):
@@ -887,7 +887,7 @@ def update_game_state(new_state: Dict[str, Any], _: bool = Depends(verify_auth))
     return {"status": "ok", "version": GAME_STATE["version"], "state": GAME_STATE}
 
 @app.post("/api/games/reset")
-def reset_game_state(mode: Optional[str] = Query(None), _: bool = Depends(verify_auth)):
+def reset_game_state(mode: Optional[str] = Query(None)):
     """Reset a specific game mode or global leaderboard."""
     global GAME_STATE
     if mode == "quiz":

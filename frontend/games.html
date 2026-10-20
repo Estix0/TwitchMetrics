@@ -668,34 +668,45 @@
       <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
         <div>
           <label
+            style="font-size: 0.8rem; color: var(--accent-cyan); font-weight: 700; display: block; margin-bottom: 0.35rem;">
+            ⚡ Link Uniwersalny (Auto-Switch - przełącza się razem z panelem w przeglądarce):
+          </label>
+          <div style="display: flex; gap: 0.5rem;">
+            <input type="text" id="obs-url-auto" class="input-field" readonly style="border-color: var(--accent-cyan);">
+            <button class="btn btn-primary" onclick="copyOBSUrl('auto')">Kopiuj</button>
+          </div>
+        </div>
+
+        <div>
+          <label
             style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.35rem;">
-            Link do OBS Overlay (Quiz):
+            Link Dedykowany do OBS (Tylko Quiz):
           </label>
           <div style="display: flex; gap: 0.5rem;">
             <input type="text" id="obs-url-quiz" class="input-field" readonly>
-            <button class="btn btn-primary" onclick="copyOBSUrl('quiz')">Kopiuj</button>
+            <button class="btn btn-secondary" onclick="copyOBSUrl('quiz')">Kopiuj</button>
           </div>
         </div>
 
         <div>
           <label
             style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.35rem;">
-            Link do OBS Overlay (Losowanie Giveaway):
+            Link Dedykowany do OBS (Tylko Losowanie Giveaway):
           </label>
           <div style="display: flex; gap: 0.5rem;">
             <input type="text" id="obs-url-giveaway" class="input-field" readonly>
-            <button class="btn btn-primary" onclick="copyOBSUrl('giveaway')">Kopiuj</button>
+            <button class="btn btn-secondary" onclick="copyOBSUrl('giveaway')">Kopiuj</button>
           </div>
         </div>
 
         <div>
           <label
             style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.35rem;">
-            Link do OBS Overlay (Wisielec / Zgadywanka):
+            Link Dedykowany do OBS (Tylko Wisielec):
           </label>
           <div style="display: flex; gap: 0.5rem;">
             <input type="text" id="obs-url-hangman" class="input-field" readonly>
-            <button class="btn btn-primary" onclick="copyOBSUrl('hangman')">Kopiuj</button>
+            <button class="btn btn-secondary" onclick="copyOBSUrl('hangman')">Kopiuj</button>
           </div>
         </div>
       </div>

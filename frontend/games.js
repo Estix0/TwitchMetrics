@@ -9,7 +9,7 @@
 const state = {
   activeGame: 'quiz', // 'quiz' | 'giveaway' | 'hangman' | 'leaderboard'
   isOverlay: new URLSearchParams(window.location.search).get('overlay') === '1',
-  targetGame: new URLSearchParams(window.location.search).get('game') || 'quiz',
+  targetGame: new URLSearchParams(window.location.search).get('game') || 'auto',
   channel: 'Streamer',
   authPassword: localStorage.getItem('tm_auth_pwd') || new URLSearchParams(window.location.search).get('password') || '',
   latestMsgId: 0,
@@ -25,7 +25,12 @@ const state = {
     timerVal: 30,
     timerMax: 30,
     timerInterval: null,
-    answers: new Map() // username -> { answer, timestamp, isCorrect }
+    answers: new Map(), // username -> { answer, timestamp, isCorrect }
+    remoteAnswersCount: 0,
+    remoteDistribution: { A: 0, B: 0, C: 0, D: 0 },
+    remotePodium: [],
+    revealed: false,
+    podium: []
   },
 
   giveaway: {
@@ -33,6 +38,7 @@ const state = {
     prize: localStorage.getItem('tm_giveaway_prize') || '',
     isOpen: false,
     participants: new Set(),
+    remoteCount: 0,
     winner: null,
     history: [],
     isRolling: false
@@ -123,58 +129,231 @@ function launchConfetti(durationMs = 4000) {
 }
 
 // ============================================================================
+// OBS OVERLAY SYNC ENGINE (Host -> Server -> OBS Studio Browser Source)
+// ============================================================================
+function serializeGameState() {
+  const counts = { A: 0, B: 0, C: 0, D: 0 };
+  state.quiz.answers.forEach((val) => {
+    if (counts[val.answer] !== undefined) counts[val.answer]++;
+  });
+
+  const q = state.quiz.currentQuestion;
+  return {
+    active_game: state.activeGame,
+    quiz: {
+      question: q ? q.question : '',
+      category: q ? (q.category || 'Ogólne') : 'Ogólne',
+      options: q ? q.options : [],
+      correct_answer: q ? (q.correctAnswer || q.correct || 'A') : 'A',
+      state: state.quiz.state,
+      duration_seconds: state.quiz.timerMax,
+      timer_val: state.quiz.timerVal,
+      answers_count: state.quiz.answers.size,
+      distribution: counts,
+      podium: state.quiz.podium || [],
+      revealed: state.quiz.state === 'revealed'
+    },
+    giveaway: {
+      keyword: state.giveaway.keyword,
+      prize: state.giveaway.prize,
+      state: state.giveaway.isOpen ? 'open' : (state.giveaway.winner ? 'drawn' : 'idle'),
+      participants_count: state.giveaway.participants.size,
+      winner: state.giveaway.winner,
+      is_rolling: state.giveaway.isRolling
+    },
+    hangman: {
+      word: state.hangman.word,
+      category: state.hangman.category,
+      hint: state.hangman.hint,
+      revealed_letters: Array.from(state.hangman.revealedLetters),
+      wrong_letters: Array.from(state.hangman.wrongLetters),
+      max_lives: state.hangman.maxLives,
+      lives_left: state.hangman.livesLeft,
+      state: state.hangman.state,
+      active_chatter: state.hangman.activeChatter,
+      turn_mode: state.hangman.turnMode,
+      turn_timer: state.hangman.turnTimer
+    }
+  };
+}
+
+let syncDebounceTimer = null;
+async function pushStateToServer(immediate = false) {
+  if (state.isOverlay) return; // Only host pushes state
+
+  const payload = serializeGameState();
+  broadcastSync('STATE_SYNC', payload);
+
+  const send = async () => {
+    try {
+      await fetch(`${API_BASE}/games/state`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {}
+  };
+
+  if (immediate) {
+    if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+    await send();
+  } else {
+    if (!syncDebounceTimer) {
+      syncDebounceTimer = setTimeout(() => {
+        syncDebounceTimer = null;
+        send();
+      }, 250);
+    }
+  }
+}
+
+let lastOverlayVersion = -1;
+function startOverlaySync() {
+  async function pollOverlayState() {
+    try {
+      const res = await fetch(`${API_BASE}/games/state?t=${Date.now()}`);
+      if (res.ok) {
+        const data = await res.json();
+        const ver = data.version || 0;
+        if (ver !== lastOverlayVersion) {
+          lastOverlayVersion = ver;
+          applyServerState(data);
+        }
+      }
+    } catch (e) {}
+  }
+
+  pollOverlayState();
+  setInterval(pollOverlayState, 350);
+}
+
+function applyServerState(data) {
+  if (!data) return;
+
+  // 1. Auto-switch mode on Overlay
+  if (state.isOverlay) {
+    const forcedGame = new URLSearchParams(window.location.search).get('game');
+    if (!forcedGame || forcedGame === 'all' || forcedGame === 'auto') {
+      if (data.active_game && data.active_game !== state.activeGame) {
+        switchGameMode(data.active_game, false);
+      }
+    }
+  }
+
+  // 2. QUIZ MODULE SYNC
+  if (data.quiz) {
+    const sq = data.quiz;
+    const wasRevealed = state.quiz.revealed;
+
+    if (sq.question) {
+      state.quiz.currentQuestion = {
+        question: sq.question,
+        category: sq.category || 'Ogólne',
+        options: sq.options || [],
+        correctAnswer: sq.correct_answer || 'A'
+      };
+    } else {
+      state.quiz.currentQuestion = null;
+    }
+
+    state.quiz.state = sq.state || 'idle';
+    state.quiz.timerVal = sq.timer_val !== undefined ? sq.timer_val : (sq.duration_seconds || 30);
+    state.quiz.timerMax = sq.duration_seconds || 30;
+    state.quiz.remoteAnswersCount = sq.answers_count || 0;
+    state.quiz.remoteDistribution = sq.distribution || { A: 0, B: 0, C: 0, D: 0 };
+    state.quiz.remotePodium = sq.podium || [];
+    state.quiz.revealed = !!sq.revealed;
+
+    renderQuizUI();
+
+    if (state.isOverlay && !wasRevealed && state.quiz.revealed) {
+      launchConfetti(3500);
+    }
+  }
+
+  // 3. GIVEAWAY MODULE SYNC
+  if (data.giveaway) {
+    const sg = data.giveaway;
+    const prevWinner = state.giveaway.winner;
+
+    state.giveaway.keyword = sg.keyword || '!losowanie';
+    state.giveaway.prize = sg.prize || '';
+    state.giveaway.isOpen = sg.state === 'open';
+    state.giveaway.remoteCount = sg.participants_count || 0;
+    state.giveaway.winner = sg.winner;
+    state.giveaway.isRolling = !!sg.is_rolling;
+
+    updateGiveawayUI();
+
+    if (state.isOverlay && sg.winner && sg.winner !== prevWinner) {
+      launchConfetti(4500);
+    }
+  }
+
+  // 4. HANGMAN MODULE SYNC
+  if (data.hangman) {
+    const sh = data.hangman;
+    state.hangman.word = sh.word || '';
+    state.hangman.category = sh.category || 'Hasło';
+    state.hangman.hint = sh.hint || '';
+    state.hangman.revealedLetters = new Set(sh.revealed_letters || []);
+    state.hangman.wrongLetters = new Set(sh.wrong_letters || []);
+    state.hangman.livesLeft = sh.lives_left !== undefined ? sh.lives_left : 6;
+    state.hangman.maxLives = sh.max_lives || 6;
+    state.hangman.state = sh.state || 'idle';
+    state.hangman.activeChatter = sh.active_chatter;
+    state.hangman.turnMode = sh.turn_mode || 'chatter';
+    state.hangman.turnTimer = sh.turn_timer !== undefined ? sh.turn_timer : 45;
+
+    renderHangmanUI();
+    updateTurnModeUI();
+  }
+}
+
+// ============================================================================
 // INITIALIZATION
 // ============================================================================
 window.addEventListener('DOMContentLoaded', async () => {
-  // Setup BroadcastChannel for multi-tab sync
+  // Setup BroadcastChannel for fast same-browser sync
   if ('BroadcastChannel' in window) {
     state.syncChannel = new BroadcastChannel('twitch_games_sync');
     state.syncChannel.onmessage = (ev) => handleSyncMessage(ev.data);
-  }
-
-  // Load custom questions from localStorage
-  loadSavedQuestions();
-
-  // Load giveaway settings
-  updateGiveawayUI();
-
-  // Check Overlay Mode
-  if (state.isOverlay) {
-    document.body.classList.add('overlay-mode');
-    switchGameMode(state.targetGame);
-  } else {
-    updateOBSUrls();
   }
 
   // Fetch status & message marker
   await fetchStatusInfo();
   await initLatestMsgId();
 
-  // Render initial Quiz question if exists
-  if (state.quiz.questionList.length > 0) {
-    loadQuizQuestion(state.quiz.currentIndex);
+  // Check Overlay Mode
+  if (state.isOverlay) {
+    document.body.classList.add('overlay-mode');
+    const initialGame = (state.targetGame && state.targetGame !== 'auto' && state.targetGame !== 'all') ? state.targetGame : 'quiz';
+    switchGameMode(initialGame, false);
+    // Overlay polls server state and renders in real-time
+    startOverlaySync();
   } else {
-    renderQuizEmptyState();
+    // Host Mode
+    loadSavedQuestions();
+    updateGiveawayUI();
+    updateOBSUrls();
+
+    if (state.quiz.questionList.length > 0) {
+      loadQuizQuestion(state.quiz.currentIndex);
+    } else {
+      renderQuizEmptyState();
+    }
+
+    setupHangmanWord('WIEDŹMIN DZIKI GON', 'Gry Komputerowe', 'Kultowy RPG od CD Projekt Red');
+    startChatPolling();
+    pushStateToServer(true);
   }
-
-  // Render initial Hangman Word
-  setupHangmanWord('WIEDŹMIN DZIKI GON', 'Gry Komputerowe', 'Kultowy RPG od CD Projekt Red');
-
-  // Start background chat polling
-  startChatPolling();
 });
 
 function handleSyncMessage(msg) {
-  if (!msg || !msg.type) return;
-  if (msg.type === 'QUIZ_UPDATE') {
-    Object.assign(state.quiz, msg.payload);
-    renderQuizUI();
-  } else if (msg.type === 'GIVEAWAY_UPDATE') {
-    Object.assign(state.giveaway, msg.payload);
-    updateGiveawayUI();
-  } else if (msg.type === 'HANGMAN_UPDATE') {
-    Object.assign(state.hangman, msg.payload);
-    renderHangmanUI();
+  if (!msg) return;
+  if (msg.type === 'STATE_SYNC') {
+    applyServerState(msg.payload);
   } else if (msg.type === 'SWITCH_MODE') {
     switchGameMode(msg.mode, false);
   }
@@ -303,6 +482,7 @@ function saveQuestions() {
 function loadQuizQuestion(index) {
   if (!state.quiz.questionList || state.quiz.questionList.length === 0) {
     renderQuizEmptyState();
+    pushStateToServer(true);
     return;
   }
 
@@ -311,33 +491,43 @@ function loadQuizQuestion(index) {
   state.quiz.currentQuestion = q;
   state.quiz.state = 'idle';
   state.quiz.answers.clear();
-
-  // Reset UI
-  const optionsGrid = document.getElementById('quiz-options-container');
-  if (optionsGrid) optionsGrid.classList.remove('voting-active');
-
-  const podium = document.getElementById('quiz-round-podium');
-  if (podium) podium.style.display = 'none';
+  state.quiz.podium = [];
 
   const log = document.getElementById('quiz-live-log');
   if (log) log.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem;">Rozpocznij rundę, aby zbierać głosy z czatu.</div>';
 
   renderQuizUI();
-  broadcastSync('QUIZ_UPDATE', state.quiz);
+  pushStateToServer(true);
 }
 
 function renderQuizEmptyState() {
-  document.getElementById('quiz-index-indicator').innerText = '0 / 0';
-  document.getElementById('quiz-votes-counter').innerText = '0';
-  document.getElementById('quiz-question-display').innerText = 'Brak pytań. Kliknij poniżej "Importuj Pytania (Wklej tekst)", aby dodać swój quiz!';
-  
+  const indicator = document.getElementById('quiz-index-indicator');
+  if (indicator) indicator.innerText = '0 / 0';
+  const votes = document.getElementById('quiz-votes-counter');
+  if (votes) votes.innerText = '0';
+
+  const qDisplay = document.getElementById('quiz-question-display');
+  if (qDisplay) {
+    if (state.isOverlay) {
+      qDisplay.innerHTML = '<div style="padding: 1.5rem 0; color: var(--text-secondary);"><span style="font-size: 2.2rem; display: block; margin-bottom: 0.5rem;">📋</span><strong>Czekamy na pytanie streamerki...</strong></div>';
+    } else {
+      qDisplay.innerText = 'Brak załadowanych pytań. Kliknij poniżej "Importuj Pytania (Wklej tekst)", aby dodać swój quiz!';
+    }
+  }
+
   ['A', 'B', 'C', 'D'].forEach(k => {
     const textEl = document.getElementById(`opt-text-${k}`);
-    if (textEl) textEl.innerText = '-';
+    if (textEl) textEl.innerText = state.isOverlay ? '...' : '-';
+    const progEl = document.getElementById(`opt-prog-${k}`);
+    if (progEl) progEl.style.width = '0%';
+    const countEl = document.getElementById(`opt-count-${k}`);
+    if (countEl) countEl.innerText = '0 odp.';
   });
 
   const btnStart = document.getElementById('btn-quiz-start');
   if (btnStart) btnStart.disabled = true;
+  const btnReveal = document.getElementById('btn-quiz-reveal');
+  if (btnReveal) btnReveal.disabled = true;
 }
 
 function stepQuizQuestion(dir) {
@@ -358,28 +548,18 @@ function startQuizRound() {
 
   state.quiz.state = 'active';
   state.quiz.answers.clear();
+  state.quiz.podium = [];
 
   const timeSelect = document.getElementById('select-quiz-time');
   const duration = parseInt(timeSelect ? timeSelect.value : '30', 10);
   state.quiz.timerMax = duration;
   state.quiz.timerVal = duration;
 
-  // CRITICAL: Hide voting percentages & breakdown while voting is active!
-  const optionsGrid = document.getElementById('quiz-options-container');
-  if (optionsGrid) optionsGrid.classList.add('voting-active');
-
-  const podium = document.getElementById('quiz-round-podium');
-  if (podium) podium.style.display = 'none';
-
   const log = document.getElementById('quiz-live-log');
   if (log) log.innerHTML = '';
 
-  document.getElementById('quiz-votes-counter').innerText = '0';
-  document.getElementById('btn-quiz-start').disabled = true;
-  document.getElementById('btn-quiz-reveal').disabled = false;
-
   renderQuizUI();
-  broadcastSync('QUIZ_UPDATE', state.quiz);
+  pushStateToServer(true);
 
   playSuccessChime();
   showToast('Głosowanie aktywne! Widzowie odpowiadają wpisując A, B, C lub D (wyniki są ukryte do końca rundy).', 'success');
@@ -390,6 +570,7 @@ function startQuizRound() {
       state.quiz.timerVal--;
       if (state.quiz.timerVal <= 5 && state.quiz.timerVal > 0) playTickSound();
       updateQuizTimerUI();
+      pushStateToServer(false);
       if (state.quiz.timerVal <= 0) {
         clearInterval(state.quiz.timerInterval);
         revealQuizAnswer();
@@ -423,6 +604,8 @@ function handleQuizMessage(username, text) {
   const counter = document.getElementById('quiz-votes-counter');
   if (counter) counter.innerText = state.quiz.answers.size;
 
+  pushStateToServer(false);
+
   // Add to live incoming feed WITHOUT revealing which letter they chose!
   const log = document.getElementById('quiz-live-log');
   if (log) {
@@ -440,25 +623,10 @@ function revealQuizAnswer() {
   if (state.quiz.timerInterval) clearInterval(state.quiz.timerInterval);
   state.quiz.state = 'revealed';
 
-  // REVEAL: Remove voting-active class so percentages & counts animate into view!
-  const optionsGrid = document.getElementById('quiz-options-container');
-  if (optionsGrid) optionsGrid.classList.remove('voting-active');
-
   const q = state.quiz.currentQuestion;
-  const correctKey = q ? q.correctAnswer : 'A';
+  const correctKey = q ? (q.correctAnswer || q.correct || 'A') : 'A';
 
-  document.querySelectorAll('.option-card').forEach(card => {
-    const k = card.getAttribute('data-key');
-    if (k === correctKey) {
-      card.classList.add('correct');
-      card.classList.remove('wrong');
-    } else {
-      card.classList.add('wrong');
-      card.classList.remove('correct');
-    }
-  });
-
-  // Calculate vote percentages
+  // Calculate vote percentages & correct chatters
   const counts = { A: 0, B: 0, C: 0, D: 0 };
   const correctChatters = [];
 
@@ -467,74 +635,138 @@ function revealQuizAnswer() {
     if (val.isCorrect) correctChatters.push({ user, timestamp: val.timestamp });
   });
 
-  const total = state.quiz.answers.size;
-  ['A', 'B', 'C', 'D'].forEach(key => {
-    const countEl = document.getElementById(`opt-count-${key}`);
-    const progEl = document.getElementById(`opt-prog-${key}`);
-    const c = counts[key] || 0;
-    const pct = total > 0 ? Math.round((c / total) * 100) : 0;
-    if (countEl) countEl.innerText = `${c} odp. (${pct}%)`;
-    if (progEl) progEl.style.width = `${pct}%`;
-  });
-
   // Sort correct chatters by speed
   correctChatters.sort((a, b) => a.timestamp - b.timestamp);
 
-  // Award Leaderboard Points
-  correctChatters.forEach((item, idx) => {
-    const bonus = idx === 0 ? 50 : (idx === 1 ? 30 : (idx === 2 ? 15 : 0));
-    addPointsToUser(item.user, 100 + bonus, true, false);
+  // Store podium and award points
+  state.quiz.podium = correctChatters.slice(0, 5).map((c, i) => {
+    const pts = 100 + (i === 0 ? 50 : (i === 1 ? 30 : (i === 2 ? 15 : 0)));
+    addPointsToUser(c.user, pts, true, false);
+    return { username: c.user, points: pts };
   });
 
-  // Reveal Podium
-  const podiumCard = document.getElementById('quiz-round-podium');
-  const podiumLetter = document.getElementById('podium-correct-letter');
-  const podiumSub = document.getElementById('podium-stats-sub');
-  const podiumList = document.getElementById('podium-list');
-
-  if (podiumCard && podiumList) {
-    podiumCard.style.display = 'block';
-    if (podiumLetter) podiumLetter.innerText = correctKey;
-    if (podiumSub) podiumSub.innerText = `${correctChatters.length} poprawnych odpowiedzi (na ${total} głosujących)`;
-
-    podiumList.innerHTML = correctChatters.slice(0, 5).map((c, i) => `
-      <div style="background: rgba(0,0,0,0.35); padding: 0.4rem 0.85rem; border-radius: var(--radius-md); border: 1px solid rgba(16,185,129,0.3); font-size: 0.85rem; display: flex; align-items: center; gap: 0.4rem;">
-        <span>${i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : '🎖️'))}</span>
-        <strong>@${c.user}</strong>
-        <span style="color: var(--accent-emerald); font-weight: 700;">+${100 + (i === 0 ? 50 : (i === 1 ? 30 : (i === 2 ? 15 : 0)))} pkt</span>
-      </div>
-    `).join('') || '<div style="color: var(--text-muted); font-size: 0.85rem;">Nikt nie odpowiedział poprawnie w tej rundzie!</div>';
-  }
-
-  document.getElementById('btn-quiz-start').disabled = false;
-  document.getElementById('btn-quiz-reveal').disabled = true;
-
+  renderQuizUI();
   playFanfare();
   launchConfetti(3500);
-  broadcastSync('QUIZ_UPDATE', state.quiz);
+  pushStateToServer(true);
 }
 
 function renderQuizUI() {
   const q = state.quiz.currentQuestion;
-  if (!q) {
+  if (!q || !q.question) {
     renderQuizEmptyState();
     return;
   }
 
-  const indicator = document.getElementById('quiz-index-indicator');
-  if (indicator) indicator.innerText = `${state.quiz.currentIndex + 1} / ${state.quiz.questionList.length}`;
+  // Question & Category
+  const catDisplay = document.getElementById('quiz-category-display');
+  const total = (state.quiz.questionList && state.quiz.questionList.length) ? state.quiz.questionList.length : 1;
+  const currentNum = state.quiz.currentIndex + 1;
+  if (catDisplay) {
+    const indexPart = state.isOverlay ? '' : ` <span id="quiz-index-indicator">${currentNum} / ${total}</span>`;
+    catDisplay.innerHTML = `📋 ${q.category || 'Pytanie'}${indexPart}`;
+  }
 
   const qText = document.getElementById('quiz-question-display');
   if (qText) qText.innerText = q.question;
 
-  q.options.forEach(opt => {
-    const textEl = document.getElementById(`opt-text-${opt.key}`);
-    if (textEl) textEl.innerText = opt.text;
-  });
+  // Options A, B, C, D text
+  if (q.options) {
+    q.options.forEach(opt => {
+      const textEl = document.getElementById(`opt-text-${opt.key}`);
+      if (textEl) textEl.innerText = opt.text;
+    });
+  }
 
-  document.getElementById('btn-quiz-start').disabled = false;
-  document.getElementById('btn-quiz-reveal').disabled = true;
-  document.getElementById('quiz-votes-counter').innerText = state.quiz.answers.size;
+  // Total Votes badge
+  const votesCount = state.isOverlay ? (state.quiz.remoteAnswersCount || 0) : state.quiz.answers.size;
+  const counter = document.getElementById('quiz-votes-counter');
+  if (counter) counter.innerText = votesCount;
+
+  const optionsGrid = document.getElementById('quiz-options-container');
+  const podiumCard = document.getElementById('quiz-round-podium');
+
+  // Handle ACTIVE vs REVEALED vs IDLE visual states
+  if (state.quiz.state === 'active') {
+    if (optionsGrid) {
+      optionsGrid.classList.add('voting-active');
+      document.querySelectorAll('.option-card').forEach(c => c.classList.remove('correct', 'wrong'));
+    }
+    if (podiumCard) podiumCard.style.display = 'none';
+  } else if (state.quiz.state === 'revealed' || state.quiz.revealed) {
+    if (optionsGrid) optionsGrid.classList.remove('voting-active');
+
+    const correctKey = q.correctAnswer || q.correct || 'A';
+    document.querySelectorAll('.option-card').forEach(card => {
+      const k = card.getAttribute('data-key');
+      if (k === correctKey) {
+        card.classList.add('correct');
+        card.classList.remove('wrong');
+      } else {
+        card.classList.add('wrong');
+        card.classList.remove('correct');
+      }
+    });
+
+    // Calculate or use remote distribution
+    let dist = state.quiz.remoteDistribution;
+    if (!state.isOverlay || !dist) {
+      dist = { A: 0, B: 0, C: 0, D: 0 };
+      state.quiz.answers.forEach((val) => {
+        if (dist[val.answer] !== undefined) dist[val.answer]++;
+      });
+    }
+
+    const totalVotes = Object.values(dist).reduce((a, b) => a + b, 0);
+    ['A', 'B', 'C', 'D'].forEach(key => {
+      const countEl = document.getElementById(`opt-count-${key}`);
+      const progEl = document.getElementById(`opt-prog-${key}`);
+      const c = dist[key] || 0;
+      const pct = totalVotes > 0 ? Math.round((c / totalVotes) * 100) : 0;
+      if (countEl) countEl.innerText = `${c} odp. (${pct}%)`;
+      if (progEl) progEl.style.width = `${pct}%`;
+    });
+
+    // Podium display
+    const podiumItems = state.isOverlay ? (state.quiz.remotePodium || []) : state.quiz.podium;
+    if (podiumCard) {
+      podiumCard.style.display = 'block';
+      const podiumLetter = document.getElementById('podium-correct-letter');
+      const podiumSub = document.getElementById('podium-stats-sub');
+      const podiumList = document.getElementById('podium-list');
+
+      if (podiumLetter) podiumLetter.innerText = correctKey;
+      if (podiumSub) podiumSub.innerText = `${podiumItems ? podiumItems.length : 0} poprawnych odpowiedzi (na ${votesCount} głosujących)`;
+      if (podiumList && podiumItems) {
+        podiumList.innerHTML = podiumItems.slice(0, 5).map((c, i) => `
+          <div style="background: rgba(0,0,0,0.35); padding: 0.4rem 0.85rem; border-radius: var(--radius-md); border: 1px solid rgba(16,185,129,0.3); font-size: 0.85rem; display: flex; align-items: center; gap: 0.4rem;">
+            <span>${i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : '🎖️'))}</span>
+            <strong>@${c.username || c.user}</strong>
+            <span style="color: var(--accent-emerald); font-weight: 700;">+${c.points || 100} pkt</span>
+          </div>
+        `).join('') || '<div style="color: var(--text-muted); font-size: 0.85rem;">Nikt nie odpowiedział poprawnie w tej rundzie!</div>';
+      }
+    }
+  } else {
+    // Idle state
+    if (optionsGrid) {
+      optionsGrid.classList.remove('voting-active');
+      document.querySelectorAll('.option-card').forEach(c => {
+        c.classList.remove('correct', 'wrong');
+        const k = c.getAttribute('data-key');
+        const prog = document.getElementById(`opt-prog-${k}`);
+        const cnt = document.getElementById(`opt-count-${k}`);
+        if (prog) prog.style.width = '0%';
+        if (cnt) cnt.innerText = '0 odp.';
+      });
+    }
+    if (podiumCard) podiumCard.style.display = 'none';
+  }
+
+  const btnStart = document.getElementById('btn-quiz-start');
+  const btnReveal = document.getElementById('btn-quiz-reveal');
+  if (btnStart) btnStart.disabled = state.quiz.state === 'active';
+  if (btnReveal) btnReveal.disabled = state.quiz.state !== 'active';
 
   updateQuizTimerUI();
 }
@@ -730,10 +962,12 @@ function saveGiveawaySettings() {
 
 function startGiveawayRegistration() {
   state.giveaway.isOpen = true;
+  state.giveaway.winner = null;
+  state.giveaway.isRolling = false;
   updateGiveawayUI();
   playSuccessChime();
   showToast(`Zapisy OTWARTE! Czat wpisuje "${state.giveaway.keyword}", aby wziąć udział.`, 'success');
-  broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+  pushStateToServer(true);
 }
 
 function closeGiveawayRegistration() {
@@ -741,7 +975,7 @@ function closeGiveawayRegistration() {
   updateGiveawayUI();
   playErrorBuzzer();
   showToast(`Zapisy ZAMKNIĘTE. Zapisano ${state.giveaway.participants.size} uczestników.`, 'info');
-  broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+  pushStateToServer(true);
 }
 
 function handleGiveawayMessage(username, text) {
@@ -755,6 +989,7 @@ function handleGiveawayMessage(username, text) {
     if (!state.giveaway.participants.has(username)) {
       state.giveaway.participants.add(username);
       updateGiveawayParticipantsUI();
+      pushStateToServer(false);
       playTickSound(1000);
     }
   }
@@ -782,6 +1017,37 @@ function updateGiveawayUI() {
   if (btnClose) btnClose.disabled = !state.giveaway.isOpen;
 
   updateGiveawayParticipantsUI();
+
+  // Handle winner card / spinner display
+  const winnerCard = document.getElementById('giveaway-winner-card');
+  const winnerName = document.getElementById('giveaway-winner-name');
+  const winnerDetails = document.getElementById('giveaway-winner-details');
+  const spinnerBox = document.getElementById('giveaway-spinner-container');
+  const spinnerText = document.getElementById('giveaway-spinner-text');
+  const idleHint = document.getElementById('giveaway-idle-hint');
+
+  if (state.giveaway.winner) {
+    if (winnerCard) winnerCard.style.display = 'flex';
+    if (winnerName) winnerName.innerText = `@${state.giveaway.winner}`;
+    if (winnerDetails) {
+      const prizeText = state.giveaway.prize ? `Nagroda: ${state.giveaway.prize} • ` : '';
+      const count = state.isOverlay ? (state.giveaway.remoteCount || 0) : state.giveaway.participants.size;
+      winnerDetails.innerText = `${prizeText}Wyłoniono spośród ${count} uczestników`;
+    }
+    if (spinnerBox) spinnerBox.classList.remove('rolling');
+    if (spinnerText) spinnerText.style.display = 'none';
+    if (idleHint) idleHint.style.display = 'none';
+  } else if (state.giveaway.isRolling) {
+    if (winnerCard) winnerCard.style.display = 'none';
+    if (spinnerBox) spinnerBox.classList.add('rolling');
+    if (spinnerText) spinnerText.style.display = 'block';
+    if (idleHint) idleHint.style.display = 'none';
+  } else {
+    if (winnerCard) winnerCard.style.display = 'none';
+    if (spinnerBox) spinnerBox.classList.remove('rolling');
+    if (spinnerText) spinnerText.style.display = 'none';
+    if (idleHint) idleHint.style.display = 'block';
+  }
 }
 
 function updateGiveawayParticipantsUI() {
@@ -789,11 +1055,11 @@ function updateGiveawayParticipantsUI() {
   const sidebarCount = document.getElementById('sidebar-giveaway-count');
   const listEl = document.getElementById('giveaway-participants-list');
 
-  const count = state.giveaway.participants.size;
+  const count = state.isOverlay ? (state.giveaway.remoteCount || 0) : state.giveaway.participants.size;
   if (countDisplay) countDisplay.innerText = count;
   if (sidebarCount) sidebarCount.innerText = count;
 
-  if (listEl) {
+  if (listEl && !state.isOverlay) {
     if (count === 0) {
       listEl.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1.5rem; font-size: 0.85rem;">Brak zapisanych uczestników.</div>';
     } else {
@@ -820,7 +1086,9 @@ function rollGiveawayWinner() {
   // Close registration automatically before drawing
   state.giveaway.isOpen = false;
   state.giveaway.isRolling = true;
+  state.giveaway.winner = null;
   updateGiveawayUI();
+  pushStateToServer(true);
 
   const spinnerBox = document.getElementById('giveaway-spinner-container');
   const spinnerText = document.getElementById('giveaway-spinner-text');
@@ -861,23 +1129,7 @@ function finishGiveawayRoll(winner) {
   state.giveaway.isRolling = false;
   state.giveaway.winner = winner;
 
-  const spinnerBox = document.getElementById('giveaway-spinner-container');
-  const spinnerText = document.getElementById('giveaway-spinner-text');
-  const winnerCard = document.getElementById('giveaway-winner-card');
-  const winnerName = document.getElementById('giveaway-winner-name');
-  const winnerDetails = document.getElementById('giveaway-winner-details');
-
-  if (spinnerBox) spinnerBox.classList.remove('rolling');
-  if (spinnerText) spinnerText.style.display = 'none';
-
-  if (winnerCard && winnerName) {
-    winnerCard.style.display = 'flex';
-    winnerName.innerText = `@${winner}`;
-    if (winnerDetails) {
-      const prizeText = state.giveaway.prize ? `Nagroda: ${state.giveaway.prize} • ` : '';
-      winnerDetails.innerText = `${prizeText}Wyłoniono spośród ${state.giveaway.participants.size} uczestników`;
-    }
-  }
+  updateGiveawayUI();
 
   // Add to session history
   state.giveaway.history.unshift({
@@ -890,7 +1142,7 @@ function finishGiveawayRoll(winner) {
   playFanfare();
   launchConfetti(4500);
   showToast(`🎉 ZWYCIĘZCA: @${winner}! Gratulacje!`, 'success');
-  broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+  pushStateToServer(true);
 }
 
 function updateGiveawayHistoryUI() {
@@ -925,12 +1177,12 @@ function clearGiveawayParticipants() {
 
     updateGiveawayUI();
     showToast("Wyczyszczono listę uczestników losowania.", "info");
-    broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+    pushStateToServer(true);
   }
 }
 
 // ============================================================================
-// MODULE 3: WISIELEC / ZGADYWANKA ("WYBRANIEC CZATU")
+// MODULE 3: WISIELEC / ZGADYWANKA ("CHATTER")
 // ============================================================================
 function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '') {
   state.hangman.word = word.toUpperCase().trim();
@@ -948,10 +1200,10 @@ function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '') {
   }
 
   renderHangmanUI();
-  broadcastSync('HANGMAN_UPDATE', state.hangman);
+  pushStateToServer(true);
   showToast(`Rozpoczęto hasło: ${category}`, 'info');
 
-  if (state.hangman.turnMode === 'chatter') {
+  if (state.hangman.turnMode === 'chatter' && !state.isOverlay) {
     rollActiveChatter();
   }
 }
@@ -1067,6 +1319,7 @@ async function rollActiveChatter() {
       showToast('Brak aktywnych osób w ostatnich 1-2 minutach! Przełączam w tryb otwarty.', 'warning');
       state.hangman.turnMode = 'all';
       updateTurnModeUI();
+      pushStateToServer(true);
       return;
     }
 
@@ -1100,6 +1353,7 @@ function assignTurnToChatter(username) {
   state.hangman.turnInterval = setInterval(() => {
     state.hangman.turnTimer--;
     if (timerCircle) timerCircle.innerText = state.hangman.turnTimer;
+    pushStateToServer(false);
     if (state.hangman.turnTimer <= 0) {
       clearInterval(state.hangman.turnInterval);
       showToast(`Czas chatera @${username} minął! Losuję kolejną osobę.`, 'warning');
@@ -1108,7 +1362,7 @@ function assignTurnToChatter(username) {
   }, 1000);
 
   showToast(`🎲 Tura chatera: @${username}! Czekam na literkę na czacie...`, 'info');
-  broadcastSync('HANGMAN_UPDATE', state.hangman);
+  pushStateToServer(true);
 }
 
 function skipActiveChatter() {
@@ -1121,7 +1375,7 @@ function toggleTurnMode() {
   state.hangman.turnMode = state.hangman.turnMode === 'chatter' ? 'all' : 'chatter';
   updateTurnModeUI();
   showToast(`Zmieniono tryb na: ${state.hangman.turnMode === 'chatter' ? 'Chatter' : 'Czat Zgaduje Razem'}`, 'info');
-  broadcastSync('HANGMAN_UPDATE', state.hangman);
+  pushStateToServer(true);
 }
 
 function updateTurnModeUI() {
@@ -1157,7 +1411,7 @@ function handleHangmanMessage(username, text) {
     launchConfetti(4500);
     showToast(`🎉 NIESAMOWITE! @${username} odgadł(a) całe hasło: "${state.hangman.word}"! (+500 pkt)`, 'success');
     state.hangman.state = 'won';
-    broadcastSync('HANGMAN_UPDATE', state.hangman);
+    pushStateToServer(true);
     return;
   }
 
@@ -1210,13 +1464,13 @@ function handleHangmanMessage(username, text) {
     }
   }
 
-  broadcastSync('HANGMAN_UPDATE', state.hangman);
+  pushStateToServer(true);
 }
 
 function revealHangmanWord() {
   for (const ch of state.hangman.word) state.hangman.revealedLetters.add(ch);
   renderHangmanUI();
-  broadcastSync('HANGMAN_UPDATE', state.hangman);
+  pushStateToServer(true);
   showToast(`Odsłonięto hasło: ${state.hangman.word}`, 'info');
 }
 
@@ -1360,10 +1614,12 @@ function updateOBSUrls() {
   const base = `${window.location.origin}${window.location.pathname}`;
   const pwdParam = state.authPassword ? `&password=${encodeURIComponent(state.authPassword)}` : '';
 
+  const autoInput = document.getElementById('obs-url-auto');
   const quizInput = document.getElementById('obs-url-quiz');
   const giveawayInput = document.getElementById('obs-url-giveaway');
   const hangmanInput = document.getElementById('obs-url-hangman');
 
+  if (autoInput) autoInput.value = `${base}?overlay=1${pwdParam}`;
   if (quizInput) quizInput.value = `${base}?overlay=1&game=quiz${pwdParam}`;
   if (giveawayInput) giveawayInput.value = `${base}?overlay=1&game=giveaway${pwdParam}`;
   if (hangmanInput) hangmanInput.value = `${base}?overlay=1&game=hangman${pwdParam}`;
@@ -1371,6 +1627,7 @@ function updateOBSUrls() {
 
 function copyOBSUrl(gameType) {
   const inputMap = {
+    auto: 'obs-url-auto',
     quiz: 'obs-url-quiz',
     giveaway: 'obs-url-giveaway',
     hangman: 'obs-url-hangman'
