@@ -996,6 +996,25 @@ def get_latest_message_id():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class SimulateMessagePayload(BaseModel):
+    username: str
+    content: str
+
+@app.post("/api/games/simulate-message")
+def simulate_chat_message(payload: SimulateMessagePayload):
+    """Inject a test message into the database to test game mechanics locally."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO messages (stream_id, username, content, is_mod, is_vip, is_sub)
+                VALUES (1, ?, ?, 0, 0, 0)
+            """, (payload.username.lower().strip(), payload.content.strip()))
+            conn.commit()
+            return {"status": "ok", "message_id": cursor.lastrowid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/games/quiz/export")
 def export_quiz_results(data: Dict[str, Any], _: bool = Depends(verify_auth)):
     """Export current quiz session scores to CSV with Excel compatibility."""

@@ -1529,3 +1529,66 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 300);
   }, 4000);
 }
+
+// ============================================================================
+// LOCAL CHAT SIMULATOR (Dla testów na localhost)
+// ============================================================================
+function openSimModal() {
+  document.getElementById('modal-sim').classList.add('active');
+}
+
+async function sendSimMessage(username, content) {
+  try {
+    const res = await fetch(`${API_BASE}/games/simulate-message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, content })
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function simQuizVotes() {
+  const voters = [
+    { u: 'wojtek_banan', opt: 'A' },
+    { u: 'chillerek369', opt: 'B' },
+    { u: 'artur__o', opt: 'B' },
+    { u: 'ilomile', opt: 'C' },
+    { u: 'przemowskyyy', opt: 'B' }
+  ];
+  showToast('Wysyłam 5 symulowanych głosów na czat...', 'info');
+  for (const v of voters) {
+    await sendSimMessage(v.u, v.opt);
+    await new Promise(r => setTimeout(r, 200));
+  }
+  closeModal('modal-sim');
+}
+
+async function simGiveawayEntrants() {
+  const kw = state.giveaway.keyword || '!losowanie';
+  const entrants = ['wojtek_banan', 'chillerek369', 'artur__o', 'ilomile', 'przemowskyyy', 'martynapanda'];
+  showToast(`Wysyłam ${entrants.length} zgłoszeń z hasłem "${kw}"...`, 'info');
+  for (const u of entrants) {
+    await sendSimMessage(u, kw);
+    await new Promise(r => setTimeout(r, 150));
+  }
+  closeModal('modal-sim');
+}
+
+async function simCustomMessage() {
+  const user = document.getElementById('sim-input-user').value.trim() || 'test_widz';
+  const msg = document.getElementById('sim-input-msg').value.trim();
+  if (!msg) {
+    showToast('Wpisz treść wiadomości!', 'error');
+    return;
+  }
+  const ok = await sendSimMessage(user, msg);
+  if (ok) {
+    showToast(`Wysłano: [${user}]: ${msg}`, 'success');
+    document.getElementById('sim-input-msg').value = '';
+  } else {
+    showToast('Błąd wysyłania wiadomości!', 'error');
+  }
+}
