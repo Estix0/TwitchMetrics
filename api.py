@@ -1,6 +1,7 @@
 import os
 import io
 import csv
+import random
 import sqlite3
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -815,6 +816,203 @@ def export_user_messages_csv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ============================================================================
+# STREAM GAMES & INTERACTIVE ADDONS (Quiz & Hangman "Wybraniec Czatu")
+# ============================================================================
+
+GAME_STATE: Dict[str, Any] = {
+    "active_game": None,  # "quiz" | "hangman" | None
+    "version": 1,
+    "quiz": {
+        "question": "",
+        "category": "Ogólne",
+        "type": "choice",  # "choice" (ABCD) or "open"
+        "options": [
+            {"key": "A", "text": ""},
+            {"key": "B", "text": ""},
+            {"key": "C", "text": ""},
+            {"key": "D", "text": ""}
+        ],
+        "correct_answer": "A",
+        "state": "idle",  # "idle", "active", "revealed"
+        "start_time": None,
+        "duration_seconds": 30,
+        "answers_count": 0,
+        "distribution": {"A": 0, "B": 0, "C": 0, "D": 0},
+        "recent_answers": [],
+        "podium": [],
+        "revealed": False
+    },
+    "hangman": {
+        "word": "",
+        "category": "Gry",
+        "hint": "",
+        "revealed_letters": [],
+        "wrong_letters": [],
+        "max_lives": 6,
+        "lives_left": 6,
+        "state": "idle",  # "idle", "playing", "won", "lost"
+        "active_chatter": None,
+        "turn_mode": "chatter",  # "chatter" (turn-based) or "all" (open chat)
+        "turn_start_time": None,
+        "turn_timeout_seconds": 45,
+        "letter_history": []
+    },
+    "leaderboard": {}
+}
+
+@app.get("/api/games/state")
+def get_game_state():
+    """Retrieve current synchronized game state for Host and OBS Overlay."""
+    return GAME_STATE
+
+@app.post("/api/games/state")
+def update_game_state(new_state: Dict[str, Any], _: bool = Depends(verify_auth)):
+    """Update game state from Host controller."""
+    global GAME_STATE
+    for k, v in new_state.items():
+        if isinstance(v, dict) and k in GAME_STATE and isinstance(GAME_STATE[k], dict):
+            GAME_STATE[k].update(v)
+        else:
+            GAME_STATE[k] = v
+    GAME_STATE["version"] = GAME_STATE.get("version", 0) + 1
+    return {"status": "ok", "version": GAME_STATE["version"], "state": GAME_STATE}
+
+@app.post("/api/games/reset")
+def reset_game_state(mode: Optional[str] = Query(None), _: bool = Depends(verify_auth)):
+    """Reset a specific game mode or global leaderboard."""
+    global GAME_STATE
+    if mode == "quiz":
+        GAME_STATE["quiz"]["state"] = "idle"
+        GAME_STATE["quiz"]["answers_count"] = 0
+        GAME_STATE["quiz"]["distribution"] = {"A": 0, "B": 0, "C": 0, "D": 0}
+        GAME_STATE["quiz"]["recent_answers"] = []
+        GAME_STATE["quiz"]["podium"] = []
+        GAME_STATE["quiz"]["revealed"] = False
+    elif mode == "hangman":
+        GAME_STATE["hangman"]["state"] = "idle"
+        GAME_STATE["hangman"]["revealed_letters"] = []
+        GAME_STATE["hangman"]["wrong_letters"] = []
+        GAME_STATE["hangman"]["lives_left"] = GAME_STATE["hangman"].get("max_lives", 6)
+        GAME_STATE["hangman"]["active_chatter"] = None
+        GAME_STATE["hangman"]["letter_history"] = []
+    elif mode == "leaderboard":
+        GAME_STATE["leaderboard"] = {}
+    else:
+        GAME_STATE["active_game"] = None
+    GAME_STATE["version"] = GAME_STATE.get("version", 0) + 1
+    return {"status": "ok", "version": GAME_STATE["version"]}
+
+@app.get("/api/games/active-chatters")
+def get_active_chatters(minutes: int = Query(2, ge=1, le=60)):
+    """
+    Get chatters who sent messages in the last N minutes.
+    Used for 'Wybraniec Czatu' mechanic in Hangman.
+    Falls back to recent stream chatters if stream/chat has been quiet.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # 1. First attempt: true recent messages in the last N minutes
+            cursor.execute(f"""
+                SELECT username, MAX(created_at) as last_seen, COUNT(*) as msg_count
+                FROM messages
+                WHERE created_at >= datetime('now', '-{minutes} minutes')
+                GROUP BY username
+                ORDER BY last_seen DESC
+                LIMIT 50
+            """)
+            rows = [dict(r) for r in cursor.fetchall()]
+
+            # 2. Fallback to latest chatters in DB if fewer than 2 found (e.g. offline testing)
+            is_fallback = False
+            if len(rows) < 2:
+                cursor.execute(f"""
+                    SELECT username, MAX(created_at) as last_seen, COUNT(*) as msg_count
+                    FROM messages
+                    WHERE created_at >= (SELECT datetime(MAX(created_at), '-{minutes} minutes') FROM messages)
+                    GROUP BY username
+                    ORDER BY last_seen DESC
+                    LIMIT 50
+                """)
+                fallback_rows = [dict(r) for r in cursor.fetchall()]
+                if fallback_rows:
+                    rows = fallback_rows
+                    is_fallback = True
+
+            random_pick = random.choice(rows)["username"] if rows else None
+
+            return {
+                "active_chatters": rows,
+                "count": len(rows),
+                "random_pick": random_pick,
+                "is_fallback": is_fallback,
+                "window_minutes": minutes
+            }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/games/recent-messages")
+def get_game_recent_messages(since_id: int = Query(0), limit: int = Query(100, ge=1, le=500)):
+    """Fetch chat messages newer than since_id for real-time game polling."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, username, content, created_at, is_mod, is_vip, is_sub
+                FROM messages
+                WHERE id > ?
+                ORDER BY id ASC
+                LIMIT ?
+            """, (since_id, limit))
+            msgs = [dict(r) for r in cursor.fetchall()]
+            max_id = msgs[-1]["id"] if msgs else since_id
+            return {"messages": msgs, "max_id": max_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/games/latest-id")
+def get_latest_message_id():
+    """Get latest message ID so the game starts listening only from now."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COALESCE(MAX(id), 0) FROM messages")
+            row = cursor.fetchone()
+            return {"latest_id": row[0] if row else 0}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/games/quiz/export")
+def export_quiz_results(data: Dict[str, Any], _: bool = Depends(verify_auth)):
+    """Export current quiz session scores to CSV with Excel compatibility."""
+    try:
+        leaderboard = data.get("leaderboard", [])
+        output = io.StringIO()
+        output.write('\ufeff')  # UTF-8 BOM
+        writer = csv.writer(output)
+        writer.writerow(["Pozycja", "Widz (Nick)", "Punkty", "Poprawne Odpowiedzi", "Skuteczność (%)"])
+        for idx, entry in enumerate(leaderboard, 1):
+            writer.writerow([
+                idx,
+                entry.get("username", ""),
+                entry.get("score", 0),
+                entry.get("correct_answers", 0),
+                f"{entry.get('accuracy', 0):.1f}%"
+            ])
+        output.seek(0)
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename=quiz_wyniki_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Mount static files and webpanel
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
 if os.path.isdir(FRONTEND_DIR):
@@ -826,6 +1024,14 @@ def read_root():
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return {"status": "ok", "message": "TwitchMetrics API is running"}
+
+@app.get("/games")
+@app.get("/games.html")
+def read_games():
+    games_path = os.path.join(FRONTEND_DIR, "games.html")
+    if os.path.exists(games_path):
+        return FileResponse(games_path)
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
