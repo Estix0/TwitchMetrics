@@ -858,6 +858,14 @@ GAME_STATE: Dict[str, Any] = {
         "turn_timeout_seconds": 45,
         "letter_history": []
     },
+    "giveaway": {
+        "keyword": "!losowanie",
+        "prize": "",
+        "state": "idle",  # "idle", "open", "closed", "drawn"
+        "participants": [],
+        "winner": None,
+        "history": []
+    },
     "leaderboard": {}
 }
 
@@ -896,6 +904,10 @@ def reset_game_state(mode: Optional[str] = Query(None), _: bool = Depends(verify
         GAME_STATE["hangman"]["lives_left"] = GAME_STATE["hangman"].get("max_lives", 6)
         GAME_STATE["hangman"]["active_chatter"] = None
         GAME_STATE["hangman"]["letter_history"] = []
+    elif mode == "giveaway":
+        GAME_STATE["giveaway"]["state"] = "idle"
+        GAME_STATE["giveaway"]["participants"] = []
+        GAME_STATE["giveaway"]["winner"] = None
     elif mode == "leaderboard":
         GAME_STATE["leaderboard"] = {}
     else:

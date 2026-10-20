@@ -1,13 +1,13 @@
 /**
  * TwitchStreamGames - Frontend Engine
- * Real-time Twitch Chat Quiz, Word Guesser ("Wybraniec Czatu") & OBS Overlay
+ * Real-time Twitch Chat Quiz (Bulk Import & Hidden Votes), Giveaway Raffle & Hangman
  */
 
 // ============================================================================
 // APP & GAME STATE
 // ============================================================================
 const state = {
-  activeGame: 'quiz', // 'quiz' | 'hangman' | 'leaderboard'
+  activeGame: 'quiz', // 'quiz' | 'giveaway' | 'hangman' | 'leaderboard'
   isOverlay: new URLSearchParams(window.location.search).get('overlay') === '1',
   targetGame: new URLSearchParams(window.location.search).get('game') || 'quiz',
   channel: 'Streamer',
@@ -19,36 +19,37 @@ const state = {
   syncChannel: null,
 
   quiz: {
-    question: '',
-    category: 'Gry',
-    type: 'choice',
-    options: [
-      { key: 'A', text: '' },
-      { key: 'B', text: '' },
-      { key: 'C', text: '' },
-      { key: 'D', text: '' }
-    ],
-    correctAnswer: 'A',
+    questionList: [], // Custom questions imported by streamer
+    currentIndex: 0,
+    currentQuestion: null,
     state: 'idle', // 'idle' | 'active' | 'revealed'
     timerVal: 30,
     timerMax: 30,
     timerInterval: null,
-    answers: new Map(), // username -> { answer, timestamp, isCorrect }
-    packIndex: 0,
-    activePack: 'gaming'
+    answers: new Map() // username -> { answer, timestamp, isCorrect }
+  },
+
+  giveaway: {
+    keyword: localStorage.getItem('tm_giveaway_kw') || '!losowanie',
+    prize: localStorage.getItem('tm_giveaway_prize') || '',
+    isOpen: false,
+    participants: new Set(),
+    winner: null,
+    history: [],
+    isRolling: false
   },
 
   hangman: {
-    word: 'WIEDŹMIN TRZY',
+    word: 'WIEDŹMIN DZIKI GON',
     category: 'Gry Komputerowe',
-    hint: 'Kultowa polska produkcja RPG',
+    hint: 'Kultowy RPG od CD Projekt Red',
     revealedLetters: new Set(),
     wrongLetters: new Set(),
     livesLeft: 6,
     maxLives: 6,
     state: 'idle', // 'idle' | 'playing' | 'won' | 'lost'
     turnMode: 'chatter', // 'chatter' (Wybraniec) | 'all' (Czat Razem)
-    activeChatter: null, // username of chosen active chatter
+    activeChatter: null,
     activeChatterInfo: null,
     turnTimer: 45,
     turnInterval: null
@@ -60,16 +61,14 @@ const state = {
 const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000/api' : '/api';
 
 // ============================================================================
-// AUDIO SYNTHESIZER (Web Audio API - Zero External Audio Files Required)
+// AUDIO SYNTHESIZER (Web Audio API - Offline & Stream Safe)
 // ============================================================================
 let audioCtx = null;
 
 function getAudioContext() {
   if (!audioCtx) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) {
-      audioCtx = new AudioContextClass();
-    }
+    if (AudioContextClass) audioCtx = new AudioContextClass();
   }
   if (audioCtx && audioCtx.state === 'suspended') {
     audioCtx.resume();
@@ -83,24 +82,19 @@ function playSuccessChime() {
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
-    
-    // 3-note ascending chime (C5 -> E5 -> G5)
-    const notes = [523.25, 659.25, 783.99];
-    notes.forEach((freq, idx) => {
+    [523.25, 659.25, 783.99].forEach((freq, idx) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, now + idx * 0.09);
-      gain.gain.setValueAtTime(0.18, now + idx * 0.09);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.09 + 0.35);
+      osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+      gain.gain.setValueAtTime(0.18, now + idx * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.32);
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.start(now + idx * 0.09);
-      osc.stop(now + idx * 0.09 + 0.36);
+      osc.start(now + idx * 0.08);
+      osc.stop(now + idx * 0.08 + 0.33);
     });
-  } catch (e) {
-    console.warn("Audio error:", e);
-  }
+  } catch (e) {}
 }
 
 function playErrorBuzzer() {
@@ -109,25 +103,21 @@ function playErrorBuzzer() {
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
-    
-    // Low saw buzzer
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(140, now);
     osc.frequency.setValueAtTime(110, now + 0.15);
     gain.gain.setValueAtTime(0.15, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.36);
-  } catch (e) {
-    console.warn("Audio error:", e);
-  }
+    osc.stop(now + 0.33);
+  } catch (e) {}
 }
 
-function playTickSound() {
+function playTickSound(freq = 800) {
   if (!state.soundEnabled) return;
   try {
     const ctx = getAudioContext();
@@ -136,8 +126,8 @@ function playTickSound() {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'triangle';
-    osc.frequency.setValueAtTime(800, now);
-    gain.gain.setValueAtTime(0.05, now);
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(0.06, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
     osc.connect(gain);
     gain.connect(ctx.destination);
@@ -152,19 +142,17 @@ function playFanfare() {
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
-    // Victorious fanfare: G4 -> C5 -> E5 -> G5 -> C6
-    const freqs = [392.00, 523.25, 659.25, 783.99, 1046.50];
-    freqs.forEach((f, i) => {
+    [392.00, 523.25, 659.25, 783.99, 1046.50].forEach((f, i) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(f, now + i * 0.12);
       gain.gain.setValueAtTime(0.2, now + i * 0.12);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.45);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(now + i * 0.12);
-      osc.stop(now + i * 0.12 + 0.52);
+      osc.stop(now + i * 0.12 + 0.48);
     });
   } catch (e) {}
 }
@@ -181,7 +169,7 @@ function toggleAudio() {
 }
 
 // ============================================================================
-// CANVAS CONFETTI EFFECT (Stream Victory & Round Win)
+// CANVAS CONFETTI (Celebration Generator)
 // ============================================================================
 let confettiParticles = [];
 let confettiAnimationId = null;
@@ -195,11 +183,10 @@ function launchConfetti(durationMs = 4000) {
 
   const colors = ['#9146FF', '#00E6CB', '#FF4F81', '#F5A623', '#10B981', '#ffffff'];
   confettiParticles = [];
-  
   for (let i = 0; i < 90; i++) {
     confettiParticles.push({
       x: Math.random() * canvas.width,
-      y: Math.random() * -canvas.height * 0.5,
+      y: Math.random() * -canvas.height * 0.4,
       size: Math.random() * 8 + 6,
       color: colors[Math.floor(Math.random() * colors.length)],
       speedY: Math.random() * 4 + 3,
@@ -239,233 +226,20 @@ function launchConfetti(durationMs = 4000) {
 }
 
 // ============================================================================
-// PRESET QUESTION & WORD PACKS
-// ============================================================================
-const QUESTION_PACKS = {
-  gaming: [
-    {
-      q: "W którym roku odbyła się oficjalna premiera gry Wiedźmin 3: Dziki Gon?",
-      cat: "🎮 Gry & Gaming",
-      options: [
-        { key: "A", text: "2013" },
-        { key: "B", text: "2014" },
-        { key: "C", text: "2015" },
-        { key: "D", text: "2016" }
-      ],
-      correct: "C"
-    },
-    {
-      q: "Jak nazywa się główny protagonista serii gier GTA: San Andreas?",
-      cat: "🎮 Gry & Gaming",
-      options: [
-        { key: "A", text: "Tommy Vercetti" },
-        { key: "B", text: "Carl 'CJ' Johnson" },
-        { key: "C", text: "Franklin Clinton" },
-        { key: "D", text: "Niko Bellic" }
-      ],
-      correct: "B"
-    },
-    {
-      q: "Z ilu graczy składa się standardowa drużyna na Summoner's Rift w League of Legends?",
-      cat: "🎮 Gry & Gaming",
-      options: [
-        { key: "A", text: "4 graczy" },
-        { key: "B", text: "5 graczy" },
-        { key: "C", text: "6 graczy" },
-        { key: "D", text: "3 graczy" }
-      ],
-      correct: "B"
-    },
-    {
-      q: "W jakiej grze najwyższa ranga w trybie turniejowym to 'The Global Elite'?",
-      cat: "🎮 Gry & Gaming",
-      options: [
-        { key: "A", text: "Valorant" },
-        { key: "B", text: "Counter-Strike" },
-        { key: "C", text: "Apex Legends" },
-        { key: "D", text: "Rainbow Six Siege" }
-      ],
-      correct: "B"
-    },
-    {
-      q: "Który blok w Minecraft jest wymagany do stworzenia portalu do Netheru?",
-      cat: "🎮 Gry & Gaming",
-      options: [
-        { key: "A", text: "Obsydian" },
-        { key: "B", text: "Bedrock" },
-        { key: "C", text: "Bruk (Cobblestone)" },
-        { key: "D", text: "Crying Obsidian" }
-      ],
-      correct: "A"
-    }
-  ],
-  twitch: [
-    {
-      q: "Jaka emotka na Twitchu jest uniwersalnym symbolem sarkazmu i ironii?",
-      cat: "📺 Twitch & Memy",
-      options: [
-        { key: "A", text: "Kappa" },
-        { key: "B", text: "PogChamp" },
-        { key: "C", text: "LUL" },
-        { key: "D", text: "KEKW" }
-      ],
-      correct: "A"
-    },
-    {
-      q: "Co oznacza popularny skrót 'AFK' używany w grach i na czacie?",
-      cat: "📺 Twitch & Memy",
-      options: [
-        { key: "A", text: "Away From Keyboard" },
-        { key: "B", text: "Always Fast Kill" },
-        { key: "C", text: "All For Kings" },
-        { key: "D", text: "Another Free Kill" }
-      ],
-      correct: "A"
-    },
-    {
-      q: "Kto był bohaterem legendarnego hiszpańskiego mema i emotki 'KEKW'?",
-      cat: "📺 Twitch & Memy",
-      options: [
-        { key: "A", text: "El Risitas" },
-        { key: "B", text: "GigaChad" },
-        { key: "C", text: "Hide The Pain Harold" },
-        { key: "D", text: "Ricardo Milos" }
-      ],
-      correct: "A"
-    },
-    {
-      q: "Jakiego koloru jest domyślna odznaka Moderatora na Twitchu?",
-      cat: "📺 Twitch & Memy",
-      options: [
-        { key: "A", text: "Fioletowy" },
-        { key: "B", text: "Zielony z mieczem" },
-        { key: "C", text: "Złoty z koroną" },
-        { key: "D", text: "Różowy diament" }
-      ],
-      correct: "B"
-    }
-  ],
-  popculture: [
-    {
-      q: "Kto zagrał postać Tony'ego Starka (Iron Mana) w Marvel Cinematic Universe?",
-      cat: "🎬 Popkultura",
-      options: [
-        { key: "A", text: "Chris Evans" },
-        { key: "B", text: "Robert Downey Jr." },
-        { key: "C", text: "Chris Hemsworth" },
-        { key: "D", text: "Mark Ruffalo" }
-      ],
-      correct: "B"
-    },
-    {
-      q: "Do którego domu w Hogwarcie należał Harry Potter?",
-      cat: "🎬 Popkultura",
-      options: [
-        { key: "A", text: "Slytherin" },
-        { key: "B", text: "Ravenclaw" },
-        { key: "C", text: "Hufflepuff" },
-        { key: "D", text: "Gryffindor" }
-      ],
-      correct: "D"
-    },
-    {
-      q: "Jak miał na imię hobbit, który niósł Jedyny Pierścień do Mordoru?",
-      cat: "🎬 Popkultura",
-      options: [
-        { key: "A", text: "Samwise Gamgee" },
-        { key: "B", text: "Frodo Baggins" },
-        { key: "C", text: "Peregrin Tuk" },
-        { key: "D", text: "Bilbo Baggins" }
-      ],
-      correct: "B"
-    }
-  ],
-  general: [
-    {
-      q: "Jaka jest stolica Australii?",
-      cat: "🧠 Wiedza Ogólna",
-      options: [
-        { key: "A", text: "Sydney" },
-        { key: "B", text: "Melbourne" },
-        { key: "C", text: "Canberra" },
-        { key: "D", text: "Brisbane" }
-      ],
-      correct: "C"
-    },
-    {
-      q: "Ile minut trwa jedna połowa w standardowym meczu piłki nożnej?",
-      cat: "🧠 Wiedza Ogólna",
-      options: [
-        { key: "A", text: "40 minut" },
-        { key: "B", text: "45 minut" },
-        { key: "C", text: "50 minut" },
-        { key: "D", text: "60 minut" }
-      ],
-      correct: "B"
-    },
-    {
-      q: "Który pierwiastek chemiczny ma symbol 'Au' w układzie okresowym?",
-      cat: "🧠 Wiedza Ogólna",
-      options: [
-        { key: "A", text: "Srebro" },
-        { key: "B", text: "Złoto" },
-        { key: "C", text: "Aluminium" },
-        { key: "D", text: "Miedź" }
-      ],
-      correct: "B"
-    }
-  ]
-};
-
-const WORD_PRESETS = {
-  gry: [
-    { word: "WIEDZMIN DZIKI GON", cat: "🎮 Gry Komputerowe", hint: "Geralt z Rivii i Ciri" },
-    { word: "CYBERPUNK DWA TYSIACE", cat: "🎮 Gry Komputerowe", hint: "Night City i Keanu Reeves" },
-    { word: "LEAGUE OF LEGENDS", cat: "🎮 Gry Komputerowe", hint: "Najpopularniejsza MOBA na świecie" },
-    { word: "COUNTER STRIKE DWA", cat: "🎮 Gry Komputerowe", hint: "Terroryści kontra Antyterroryści" },
-    { word: "MINECRAFT", cat: "🎮 Gry Komputerowe", hint: "Sześcienny świat i Creepery" },
-    { word: "BALDURS GATE TRZY", cat: "🎮 Gry Komputerowe", hint: "Gra roku RPG od Larian Studios" }
-  ],
-  filmy: [
-    { word: "WLADCA PIERSCIENI", cat: "🎬 Filmy & Kino", hint: "Drużyna Pierścienia i Mordor" },
-    { word: "GWIEZDNE WOJNY", cat: "🎬 Filmy & Kino", hint: "Niech Moc będzie z Tobą" },
-    { word: "INTERSTELLAR", cat: "🎬 Filmy & Kino", hint: "Czarna dziura i podróż kosmiczna" },
-    { word: "PIRACI Z KARAIBOW", cat: "🎬 Filmy & Kino", hint: "Kapitan Jack Sparrow" }
-  ],
-  jedzenie: [
-    { word: "PIEROGI RUSKIE", cat: "🍕 Jedzenie & Kuchnia", hint: "Klasyk z twarogiem i ziemniakami" },
-    { word: "KOCIOLEK PANORAMIKSA", cat: "🍕 Jedzenie & Kuchnia", hint: "Daje nadludzką siłę Galom" },
-    { word: "PIZZA MARGHERITA", cat: "🍕 Jedzenie & Kuchnia", hint: "Sos pomidorowy, mozzarella i bazylia" },
-    { word: "SERNIK Z RODZYNKAMI", cat: "🍕 Jedzenie & Kuchnia", hint: "Odwieczny spór przy wigilijnym stole" }
-  ],
-  przyslowia: [
-    { word: "BEZ PRACY NIE MA KOLACZY", cat: "🇵🇱 Polskie Przysłowia", hint: "O wysiłku i nagrodzie" },
-    { word: "LEPSZY WROBEL W GARSCI", cat: "🇵🇱 Polskie Przysłowia", hint: "...niż gołąb na dachu" },
-    { word: "KTO RANO WSTAJE", cat: "🇵🇱 Polskie Przysłowia", hint: "...temu Pan Bóg daje" }
-  ],
-  twitch: [
-    { word: "MODERATOR CZATU", cat: "📺 Twitch & Społeczność", hint: "Pilnuje porządku zielonym mieczem" },
-    { word: "RAID NA STREAMA", cat: "📺 Twitch & Społeczność", hint: "Przejście z widzami na inny kanał" },
-    { word: "EMOTKA KANALOWA", cat: "📺 Twitch & Społeczność", hint: "Dostępna po wykupieniu suba" }
-  ],
-  zwierzeta: [
-    { word: "PANDA WIELKA", cat: "🦁 Zwierzęta & Przyroda", hint: "Żywi się pędami bambusa" },
-    { word: "ORZEL BIELIK", cat: "🦁 Zwierzęta & Przyroda", hint: "Symbol narodowy Polski" },
-    { word: "DELFIN BUTLONOSY", cat: "🦁 Zwierzęta & Przyroda", hint: "Inteligentny ssak morski" }
-  ]
-};
-
-// ============================================================================
 // INITIALIZATION
 // ============================================================================
 window.addEventListener('DOMContentLoaded', async () => {
-  // Setup BroadcastChannel for instant same-browser multi-tab sync
+  // Setup BroadcastChannel for multi-tab sync
   if ('BroadcastChannel' in window) {
     state.syncChannel = new BroadcastChannel('twitch_games_sync');
-    state.syncChannel.onmessage = (ev) => {
-      handleSyncMessage(ev.data);
-    };
+    state.syncChannel.onmessage = (ev) => handleSyncMessage(ev.data);
   }
+
+  // Load custom questions from localStorage
+  loadSavedQuestions();
+
+  // Load giveaway settings
+  updateGiveawayUI();
 
   // Check Overlay Mode
   if (state.isOverlay) {
@@ -475,17 +249,21 @@ window.addEventListener('DOMContentLoaded', async () => {
     updateOBSUrls();
   }
 
-  // Load Status & Initial latest message ID
+  // Fetch status & message marker
   await fetchStatusInfo();
   await initLatestMsgId();
 
-  // Load Initial Quiz Question
-  loadQuestionPack('gaming', 0);
+  // Render initial Quiz question if exists
+  if (state.quiz.questionList.length > 0) {
+    loadQuizQuestion(state.quiz.currentIndex);
+  } else {
+    renderQuizEmptyState();
+  }
 
-  // Load Initial Hangman Word
-  loadRandomWordPreset();
+  // Render initial Hangman Word
+  setupHangmanWord('WIEDŹMIN DZIKI GON', 'Gry Komputerowe', 'Kultowy RPG od CD Projekt Red');
 
-  // Start Real-Time Chat Polling
+  // Start background chat polling
   startChatPolling();
 });
 
@@ -494,6 +272,9 @@ function handleSyncMessage(msg) {
   if (msg.type === 'QUIZ_UPDATE') {
     Object.assign(state.quiz, msg.payload);
     renderQuizUI();
+  } else if (msg.type === 'GIVEAWAY_UPDATE') {
+    Object.assign(state.giveaway, msg.payload);
+    updateGiveawayUI();
   } else if (msg.type === 'HANGMAN_UPDATE') {
     Object.assign(state.hangman, msg.payload);
     renderHangmanUI();
@@ -564,11 +345,8 @@ function startChatPolling() {
   if (state.pollTimer) clearInterval(state.pollTimer);
   state.pollTimer = setInterval(async () => {
     try {
-      const headers = {};
-      if (state.authPassword) headers['X-Panel-Password'] = state.authPassword;
-
       const url = `${API_BASE}/games/recent-messages?since_id=${state.latestMsgId}&limit=100`;
-      const res = await fetch(url, { headers });
+      const res = await fetch(url);
       if (!res.ok) return;
 
       const data = await res.json();
@@ -578,9 +356,7 @@ function startChatPolling() {
           processIncomingMessage(msg);
         }
       }
-    } catch (e) {
-      // Quiet background polling
-    }
+    } catch (e) {}
   }, 1000);
 }
 
@@ -594,39 +370,95 @@ function processIncomingMessage(msg) {
     handleQuizMessage(user, rawText);
   }
 
-  // 2. Process for Active Hangman ("Wybraniec Czatu")
+  // 2. Process for Active Giveaway / Losowanie
+  if (state.giveaway.isOpen) {
+    handleGiveawayMessage(user, rawText);
+  }
+
+  // 3. Process for Active Hangman
   if (state.activeGame === 'hangman' && state.hangman.state === 'playing') {
     handleHangmanMessage(user, rawText);
   }
 }
 
 // ============================================================================
-// QUIZ ENGINE
+// QUIZ ENGINE (Własne pytania, ukryte procenty i głosy)
 // ============================================================================
-function loadQuestionPack(packName, index = 0) {
-  if (!QUESTION_PACKS[packName] || QUESTION_PACKS[packName].length === 0) return;
-  state.quiz.activePack = packName;
-  state.quiz.packIndex = index % QUESTION_PACKS[packName].length;
-  const qData = QUESTION_PACKS[packName][state.quiz.packIndex];
+function loadSavedQuestions() {
+  const saved = localStorage.getItem('tm_quiz_questions');
+  if (saved) {
+    try {
+      state.quiz.questionList = JSON.parse(saved);
+    } catch (e) {
+      state.quiz.questionList = [];
+    }
+  } else {
+    state.quiz.questionList = [];
+  }
+  updateQuestionManagerUI();
+}
 
-  state.quiz.question = qData.q;
-  state.quiz.category = qData.cat;
-  state.quiz.options = JSON.parse(JSON.stringify(qData.options));
-  state.quiz.correctAnswer = qData.correct.toUpperCase();
+function saveQuestions() {
+  localStorage.setItem('tm_quiz_questions', JSON.stringify(state.quiz.questionList));
+  updateQuestionManagerUI();
+}
+
+function loadQuizQuestion(index) {
+  if (!state.quiz.questionList || state.quiz.questionList.length === 0) {
+    renderQuizEmptyState();
+    return;
+  }
+
+  state.quiz.currentIndex = Math.max(0, Math.min(index, state.quiz.questionList.length - 1));
+  const q = state.quiz.questionList[state.quiz.currentIndex];
+  state.quiz.currentQuestion = q;
   state.quiz.state = 'idle';
   state.quiz.answers.clear();
 
+  // Reset UI
+  const optionsGrid = document.getElementById('quiz-options-container');
+  if (optionsGrid) optionsGrid.classList.remove('voting-active');
+
+  const podium = document.getElementById('quiz-round-podium');
+  if (podium) podium.style.display = 'none';
+
+  const log = document.getElementById('quiz-live-log');
+  if (log) log.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem;">Rozpocznij rundę, aby zbierać głosy z czatu.</div>';
+
   renderQuizUI();
   broadcastSync('QUIZ_UPDATE', state.quiz);
-  showToast(`Załadowano pytanie ${state.quiz.packIndex + 1}/${QUESTION_PACKS[packName].length}`, 'info');
 }
 
-function loadNextPresetQuestion() {
-  const pack = state.quiz.activePack || 'gaming';
-  loadQuestionPack(pack, state.quiz.packIndex + 1);
+function renderQuizEmptyState() {
+  document.getElementById('quiz-index-indicator').innerText = '0 / 0';
+  document.getElementById('quiz-votes-counter').innerText = '0';
+  document.getElementById('quiz-question-display').innerText = 'Brak pytań. Kliknij poniżej "Importuj Pytania (Wklej tekst)", aby dodać swój quiz!';
+  
+  ['A', 'B', 'C', 'D'].forEach(k => {
+    const textEl = document.getElementById(`opt-text-${k}`);
+    if (textEl) textEl.innerText = '-';
+  });
+
+  const btnStart = document.getElementById('btn-quiz-start');
+  if (btnStart) btnStart.disabled = true;
+}
+
+function stepQuizQuestion(dir) {
+  if (!state.quiz.questionList || state.quiz.questionList.length === 0) return;
+  const nextIdx = state.quiz.currentIndex + dir;
+  if (nextIdx >= 0 && nextIdx < state.quiz.questionList.length) {
+    loadQuizQuestion(nextIdx);
+  } else {
+    showToast(dir > 0 ? 'To było ostatnie pytanie w bazie!' : 'To jest pierwsze pytanie!', 'info');
+  }
 }
 
 function startQuizRound() {
+  if (!state.quiz.currentQuestion) {
+    showToast('Najpierw zaimportuj pytania!', 'warning');
+    return;
+  }
+
   state.quiz.state = 'active';
   state.quiz.answers.clear();
 
@@ -635,34 +467,32 @@ function startQuizRound() {
   state.quiz.timerMax = duration;
   state.quiz.timerVal = duration;
 
-  // Clear podium and logs
+  // CRITICAL: Hide voting percentages & breakdown while voting is active!
+  const optionsGrid = document.getElementById('quiz-options-container');
+  if (optionsGrid) optionsGrid.classList.add('voting-active');
+
   const podium = document.getElementById('quiz-round-podium');
   if (podium) podium.style.display = 'none';
 
   const log = document.getElementById('quiz-live-log');
   if (log) log.innerHTML = '';
 
-  renderQuizUI();
-  broadcastSync('QUIZ_UPDATE', state.quiz);
-
-  // Host buttons state
+  document.getElementById('quiz-votes-counter').innerText = '0';
   document.getElementById('btn-quiz-start').disabled = true;
   document.getElementById('btn-quiz-reveal').disabled = false;
 
-  playSuccessChime();
-  showToast('Runda rozpoczęta! Czat może odpowiadać wpisując A, B, C lub D.', 'success');
+  renderQuizUI();
+  broadcastSync('QUIZ_UPDATE', state.quiz);
 
-  // Start countdown if not manual
+  playSuccessChime();
+  showToast('Głosowanie aktywne! Widzowie odpowiadają wpisując A, B, C lub D (wyniki są ukryte do końca rundy).', 'success');
+
   if (state.quiz.timerInterval) clearInterval(state.quiz.timerInterval);
   if (duration > 0) {
     state.quiz.timerInterval = setInterval(() => {
       state.quiz.timerVal--;
-      if (state.quiz.timerVal <= 5 && state.quiz.timerVal > 0) {
-        playTickSound();
-      }
-
+      if (state.quiz.timerVal <= 5 && state.quiz.timerVal > 0) playTickSound();
       updateQuizTimerUI();
-
       if (state.quiz.timerVal <= 0) {
         clearInterval(state.quiz.timerInterval);
         revealQuizAnswer();
@@ -671,106 +501,55 @@ function startQuizRound() {
   }
 }
 
-function updateQuizTimerUI() {
-  const badge = document.getElementById('quiz-timer-badge');
-  const sec = document.getElementById('quiz-timer-sec');
-  const fill = document.getElementById('quiz-timer-fill');
-
-  if (sec) sec.innerText = state.quiz.timerVal;
-  if (fill && state.quiz.timerMax > 0) {
-    const pct = Math.max(0, (state.quiz.timerVal / state.quiz.timerMax) * 100);
-    fill.style.width = `${pct}%`;
-    if (pct < 25) {
-      fill.style.background = 'var(--accent-red)';
-    } else if (pct < 50) {
-      fill.style.background = 'var(--accent-amber)';
-    } else {
-      fill.style.background = 'linear-gradient(90deg, var(--twitch-purple), var(--accent-cyan))';
-    }
-  }
-
-  if (badge) {
-    if (state.quiz.timerVal <= 5 && state.quiz.timerVal > 0) {
-      badge.classList.add('danger');
-    } else {
-      badge.classList.remove('danger');
-    }
-  }
-}
-
 function handleQuizMessage(username, text) {
-  // Only first answer counts!
+  // Only first answer per chatter counts!
   if (state.quiz.answers.has(username)) return;
 
-  // Extract letter from message (e.g. "a", "Odp B", "C)", "d.")
   const clean = text.toUpperCase().replace(/[^A-D]/g, '');
   let chosenKey = null;
 
   if (clean.length > 0 && ['A', 'B', 'C', 'D'].includes(clean[0])) {
     chosenKey = clean[0];
-  } else {
-    // Check if chatter typed exact text of option
-    for (const opt of state.quiz.options) {
-      if (opt.text && text.toLowerCase().includes(opt.text.toLowerCase())) {
-        chosenKey = opt.key;
-        break;
-      }
-    }
   }
 
   if (!chosenKey) return;
 
-  const isCorrect = chosenKey === state.quiz.correctAnswer;
+  const q = state.quiz.currentQuestion;
+  const isCorrect = chosenKey === q.correctAnswer;
   state.quiz.answers.set(username, {
     answer: chosenKey,
     timestamp: Date.now(),
     isCorrect
   });
 
-  // Update live counter badge
-  const totalBadge = document.getElementById('live-answers-total-badge');
-  if (totalBadge) totalBadge.innerText = state.quiz.answers.size;
+  // Update total vote counter
+  const counter = document.getElementById('quiz-votes-counter');
+  if (counter) counter.innerText = state.quiz.answers.size;
 
-  // Add entry to live stream log
+  // Add to live incoming feed WITHOUT revealing which letter they chose!
   const log = document.getElementById('quiz-live-log');
   if (log) {
     const entry = document.createElement('div');
     entry.className = 'log-entry';
-    entry.innerHTML = `<span><strong>@${username}</strong> wybrał(a):</span><span style="font-weight: 800; color: var(--twitch-purple-light);">${chosenKey}</span>`;
+    entry.innerHTML = `<span><strong>@${username}</strong> oddał(a) głos</span><span style="color: var(--accent-emerald); font-weight: 700;">✅</span>`;
     log.prepend(entry);
     if (log.children.length > 30) log.lastElementChild.remove();
   }
 
-  // Update vote distribution counts
-  updateOptionCounts();
-  playTickSound();
-}
-
-function updateOptionCounts() {
-  const counts = { A: 0, B: 0, C: 0, D: 0 };
-  state.quiz.answers.forEach(val => {
-    if (counts[val.answer] !== undefined) counts[val.answer]++;
-  });
-
-  const total = state.quiz.answers.size;
-
-  ['A', 'B', 'C', 'D'].forEach(key => {
-    const countEl = document.getElementById(`opt-count-${key}`);
-    const progEl = document.getElementById(`opt-prog-${key}`);
-    const c = counts[key] || 0;
-    const pct = total > 0 ? Math.round((c / total) * 100) : 0;
-
-    if (countEl) countEl.innerText = `${c} odp. (${pct}%)`;
-    if (progEl) progEl.style.width = `${pct}%`;
-  });
+  playTickSound(900);
 }
 
 function revealQuizAnswer() {
   if (state.quiz.timerInterval) clearInterval(state.quiz.timerInterval);
   state.quiz.state = 'revealed';
 
-  // Highlight correct and wrong options
-  const correctKey = state.quiz.correctAnswer;
+  // REVEAL: Remove voting-active class so percentages & counts animate into view!
+  const optionsGrid = document.getElementById('quiz-options-container');
+  if (optionsGrid) optionsGrid.classList.remove('voting-active');
+
+  const q = state.quiz.currentQuestion;
+  const correctKey = q ? q.correctAnswer : 'A';
+
   document.querySelectorAll('.option-card').forEach(card => {
     const k = card.getAttribute('data-key');
     if (k === correctKey) {
@@ -782,25 +561,35 @@ function revealQuizAnswer() {
     }
   });
 
-  // Calculate scores & round podium
+  // Calculate vote percentages
+  const counts = { A: 0, B: 0, C: 0, D: 0 };
   const correctChatters = [];
+
   state.quiz.answers.forEach((val, user) => {
-    if (val.isCorrect) {
-      correctChatters.push({ user, timestamp: val.timestamp });
-    }
+    if (counts[val.answer] !== undefined) counts[val.answer]++;
+    if (val.isCorrect) correctChatters.push({ user, timestamp: val.timestamp });
   });
 
-  // Sort by speed
+  const total = state.quiz.answers.size;
+  ['A', 'B', 'C', 'D'].forEach(key => {
+    const countEl = document.getElementById(`opt-count-${key}`);
+    const progEl = document.getElementById(`opt-prog-${key}`);
+    const c = counts[key] || 0;
+    const pct = total > 0 ? Math.round((c / total) * 100) : 0;
+    if (countEl) countEl.innerText = `${c} odp. (${pct}%)`;
+    if (progEl) progEl.style.width = `${pct}%`;
+  });
+
+  // Sort correct chatters by speed
   correctChatters.sort((a, b) => a.timestamp - b.timestamp);
 
   // Award Leaderboard Points
   correctChatters.forEach((item, idx) => {
     const bonus = idx === 0 ? 50 : (idx === 1 ? 30 : (idx === 2 ? 15 : 0));
-    const roundPts = 100 + bonus;
-    addPointsToUser(item.user, roundPts, true, false);
+    addPointsToUser(item.user, 100 + bonus, true, false);
   });
 
-  // Update Round Podium UI
+  // Reveal Podium
   const podiumCard = document.getElementById('quiz-round-podium');
   const podiumLetter = document.getElementById('podium-correct-letter');
   const podiumSub = document.getElementById('podium-stats-sub');
@@ -809,7 +598,7 @@ function revealQuizAnswer() {
   if (podiumCard && podiumList) {
     podiumCard.style.display = 'block';
     if (podiumLetter) podiumLetter.innerText = correctKey;
-    if (podiumSub) podiumSub.innerText = `${correctChatters.length} poprawnych odpowiedzi (na ${state.quiz.answers.size} czatujących)`;
+    if (podiumSub) podiumSub.innerText = `${correctChatters.length} poprawnych odpowiedzi (na ${total} głosujących)`;
 
     podiumList.innerHTML = correctChatters.slice(0, 5).map((c, i) => `
       <div style="background: rgba(0,0,0,0.35); padding: 0.4rem 0.85rem; border-radius: var(--radius-md); border: 1px solid rgba(16,185,129,0.3); font-size: 0.85rem; display: flex; align-items: center; gap: 0.4rem;">
@@ -817,10 +606,9 @@ function revealQuizAnswer() {
         <strong>@${c.user}</strong>
         <span style="color: var(--accent-emerald); font-weight: 700;">+${100 + (i === 0 ? 50 : (i === 1 ? 30 : (i === 2 ? 15 : 0)))} pkt</span>
       </div>
-    `).join('') || '<div style="color: var(--text-muted); font-size: 0.85rem;">Nikt nie udzielił poprawnej odpowiedzi w tej rundzie!</div>';
+    `).join('') || '<div style="color: var(--text-muted); font-size: 0.85rem;">Nikt nie odpowiedział poprawnie w tej rundzie!</div>';
   }
 
-  // Host buttons state
   document.getElementById('btn-quiz-start').disabled = false;
   document.getElementById('btn-quiz-reveal').disabled = true;
 
@@ -830,77 +618,424 @@ function revealQuizAnswer() {
 }
 
 function renderQuizUI() {
-  document.getElementById('quiz-category-display').innerText = state.quiz.category;
-  document.getElementById('quiz-question-display').innerText = state.quiz.question;
+  const q = state.quiz.currentQuestion;
+  if (!q) {
+    renderQuizEmptyState();
+    return;
+  }
 
-  state.quiz.options.forEach(opt => {
+  const indicator = document.getElementById('quiz-index-indicator');
+  if (indicator) indicator.innerText = `${state.quiz.currentIndex + 1} / ${state.quiz.questionList.length}`;
+
+  const qText = document.getElementById('quiz-question-display');
+  if (qText) qText.innerText = q.question;
+
+  q.options.forEach(opt => {
     const textEl = document.getElementById(`opt-text-${opt.key}`);
     if (textEl) textEl.innerText = opt.text;
   });
 
-  // Reset option cards highlight
-  document.querySelectorAll('.option-card').forEach(card => {
-    card.classList.remove('correct', 'wrong');
-  });
+  document.getElementById('btn-quiz-start').disabled = false;
+  document.getElementById('btn-quiz-reveal').disabled = true;
+  document.getElementById('quiz-votes-counter').innerText = state.quiz.answers.size;
 
-  updateOptionCounts();
   updateQuizTimerUI();
 }
 
-function openAddQuestionModal() {
-  document.getElementById('modal-add-question').classList.add('active');
+function updateQuizTimerUI() {
+  const sec = document.getElementById('quiz-timer-sec');
+  const fill = document.getElementById('quiz-timer-fill');
+  const badge = document.getElementById('quiz-timer-badge');
+
+  if (sec) sec.innerText = state.quiz.timerVal;
+  if (fill && state.quiz.timerMax > 0) {
+    const pct = Math.max(0, (state.quiz.timerVal / state.quiz.timerMax) * 100);
+    fill.style.width = `${pct}%`;
+    fill.style.background = pct < 25 ? 'var(--accent-red)' : (pct < 50 ? 'var(--accent-amber)' : 'linear-gradient(90deg, var(--twitch-purple), var(--accent-cyan))');
+  }
+
+  if (badge) {
+    if (state.quiz.timerVal <= 5 && state.quiz.timerVal > 0) badge.classList.add('danger');
+    else badge.classList.remove('danger');
+  }
 }
 
-function applyCustomQuestion() {
-  const cat = document.getElementById('input-q-category').value.trim() || 'Własne Pytanie';
-  const q = document.getElementById('input-q-text').value.trim();
-  const a = document.getElementById('input-q-opt-A').value.trim();
-  const b = document.getElementById('input-q-opt-B').value.trim();
-  const c = document.getElementById('input-q-opt-C').value.trim();
-  const d = document.getElementById('input-q-opt-D').value.trim();
-  const correct = document.getElementById('input-q-correct').value;
+// -------------------------------------------------------------
+// BULK IMPORT PARSER (Multi-line / Pipe / Semicolon / CSV)
+// -------------------------------------------------------------
+function openBulkImportModal() {
+  document.getElementById('modal-bulk-import').classList.add('active');
+}
 
-  if (!q || !a || !b) {
-    showToast('Wpisz treść pytania oraz przynajmniej opcje A i B!', 'error');
+function insertExampleQuestions() {
+  const example = 
+`W którym roku wydano grę Wiedźmin 3: Dziki Gon? | 2013 | 2014 | 2015 | 2016 | C
+Jak nazywa się główna postać w GTA: San Andreas? | Tommy Vercetti | CJ (Carl Johnson) | Franklin | Niko Bellic | B
+Jaka emotka na Twitchu oznacza sarkazm? | Kappa | PogChamp | LUL | KEKW | A
+Z ilu graczy składa się drużyna na Summoner's Rift w LoL? | 3 | 4 | 5 | 6 | C
+Jaka jest stolica Australii? | Sydney | Melbourne | Canberra | Brisbane | C`;
+  
+  document.getElementById('textarea-bulk-import').value = example;
+}
+
+function processBulkImport() {
+  const text = document.getElementById('textarea-bulk-import').value.trim();
+  if (!text) {
+    showToast('Wklej pytania w pole tekstowe!', 'error');
     return;
   }
 
-  state.quiz.question = q;
-  state.quiz.category = cat;
-  state.quiz.options = [
-    { key: 'A', text: a },
-    { key: 'B', text: b },
-    { key: 'C', text: c || '-' },
-    { key: 'D', text: d || '-' }
-  ];
-  state.quiz.correctAnswer = correct;
-  state.quiz.state = 'idle';
-  state.quiz.answers.clear();
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const parsed = [];
 
-  closeModal('modal-add-question');
-  renderQuizUI();
-  broadcastSync('QUIZ_UPDATE', state.quiz);
-  showToast('Pomyślnie ustawiono nowe pytanie!', 'success');
+  for (let line of lines) {
+    // 1. Check for separator: pipe (|) or semicolon (;)
+    const sep = line.includes('|') ? '|' : (line.includes(';') ? ';' : null);
+    if (sep) {
+      const parts = line.split(sep).map(p => p.trim());
+      if (parts.length >= 6) {
+        const [q, a, b, c, d, correct] = parts;
+        parsed.push({
+          question: q,
+          options: [
+            { key: 'A', text: a },
+            { key: 'B', text: b },
+            { key: 'C', text: c },
+            { key: 'D', text: d }
+          ],
+          correctAnswer: correct.toUpperCase().replace(/[^A-D]/g, '') || 'A'
+        });
+      }
+    }
+  }
+
+  if (parsed.length === 0) {
+    showToast('Nie rozpoznano formatu! Użyj formatu: Pytanie | Opcja A | Opcja B | Opcja C | Opcja D | Poprawna', 'error');
+    return;
+  }
+
+  state.quiz.questionList = parsed;
+  saveQuestions();
+  closeModal('modal-bulk-import');
+  loadQuizQuestion(0);
+  showToast(`Pomyślnie zaimportowano ${parsed.length} pytań!`, 'success');
+}
+
+function openQuestionManagerModal() {
+  updateQuestionManagerUI();
+  document.getElementById('modal-question-manager').classList.add('active');
+}
+
+function updateQuestionManagerUI() {
+  const totalCountEl = document.getElementById('qm-total-count');
+  const btnCount = document.getElementById('btn-count-loaded-q');
+  const container = document.getElementById('qm-items-container');
+  const quickList = document.getElementById('quick-question-list');
+
+  const count = state.quiz.questionList.length;
+  if (totalCountEl) totalCountEl.innerText = count;
+  if (btnCount) btnCount.innerText = count;
+
+  if (container) {
+    if (count === 0) {
+      container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 2rem;">Brak pytań w bazie. Kliknij poniżej "Wklej Nowe Pytania".</div>';
+    } else {
+      container.innerHTML = state.quiz.questionList.map((q, idx) => `
+        <div class="qm-item ${idx === state.quiz.currentIndex ? 'active' : ''}">
+          <div style="flex: 1;">
+            <div style="font-weight: 700; color: #fff; margin-bottom: 0.25rem;">
+              ${idx + 1}. ${q.question}
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; gap: 0.75rem;">
+              <span>A: ${q.options[0].text}</span>
+              <span>B: ${q.options[1].text}</span>
+              <span>C: ${q.options[2].text}</span>
+              <span>D: ${q.options[3].text}</span>
+              <span style="color: var(--accent-emerald); font-weight: 700;">Poprawna: ${q.correctAnswer}</span>
+            </div>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary btn-icon" onclick="jumpToQuizQuestion(${idx})" title="Załaduj na planszę">▶</button>
+            <button class="btn btn-danger btn-icon" onclick="deleteQuizQuestion(${idx})" title="Usuń pytanie">🗑️</button>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  // Sidebar Quick List
+  if (quickList) {
+    if (count === 0) {
+      quickList.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.85rem;">Brak pytań. Kliknij "Importuj Pytania" powyżej.</div>';
+    } else {
+      quickList.innerHTML = state.quiz.questionList.map((q, idx) => `
+        <div class="leader-item ${idx === state.quiz.currentIndex ? 'rank-1' : ''}" style="cursor: pointer;" onclick="jumpToQuizQuestion(${idx})">
+          <div class="leader-left">
+            <span class="rank-badge">${idx + 1}</span>
+            <span class="leader-name" style="font-size: 0.825rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">
+              ${q.question}
+            </span>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+}
+
+function jumpToQuizQuestion(index) {
+  closeModal('modal-question-manager');
+  loadQuizQuestion(index);
+}
+
+function deleteQuizQuestion(index) {
+  state.quiz.questionList.splice(index, 1);
+  saveQuestions();
+  if (state.quiz.currentIndex >= state.quiz.questionList.length) {
+    state.quiz.currentIndex = Math.max(0, state.quiz.questionList.length - 1);
+  }
+  loadQuizQuestion(state.quiz.currentIndex);
+  showToast('Usunięto pytanie.', 'info');
+}
+
+function clearAllQuestions() {
+  if (confirm("Czy na pewno chcesz usunąć wszystkie załadowane pytania?")) {
+    state.quiz.questionList = [];
+    saveQuestions();
+    renderQuizEmptyState();
+    closeModal('modal-question-manager');
+    showToast("Wyczyszczono bazę pytań.", "info");
+  }
 }
 
 // ============================================================================
-// WISIELEC / ZGADYWANKA SŁOWNA ("WYBRANIEC CZATU")
+// MODULE 2: GIVEAWAY / LOSOWANIE (Słowo kluczowe & Losowanie usera)
 // ============================================================================
-function loadRandomWordPreset() {
-  const categories = Object.keys(WORD_PRESETS);
-  const cat = categories[Math.floor(Math.random() * categories.length)];
-  loadWordFromCategory(cat);
+function openGiveawaySettingsModal() {
+  document.getElementById('input-giveaway-keyword').value = state.giveaway.keyword;
+  document.getElementById('input-giveaway-prize').value = state.giveaway.prize;
+  document.getElementById('modal-giveaway-settings').classList.add('active');
 }
 
-function loadWordFromCategory(catKey) {
-  const list = WORD_PRESETS[catKey];
-  if (!list || list.length === 0) return;
-  const item = list[Math.floor(Math.random() * list.length)];
+function saveGiveawaySettings() {
+  const kw = document.getElementById('input-giveaway-keyword').value.trim() || '!losowanie';
+  const prize = document.getElementById('input-giveaway-prize').value.trim();
 
-  setupHangmanWord(item.word, item.cat, item.hint);
+  state.giveaway.keyword = kw;
+  state.giveaway.prize = prize;
+  localStorage.setItem('tm_giveaway_kw', kw);
+  localStorage.setItem('tm_giveaway_prize', prize);
+
+  closeModal('modal-giveaway-settings');
+  updateGiveawayUI();
+  broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+  showToast(`Ustawiono słowo kluczowe: "${kw}"`, 'success');
 }
 
-function setupHangmanWord(word, category = 'Gry', hint = '') {
+function startGiveawayRegistration() {
+  state.giveaway.isOpen = true;
+  updateGiveawayUI();
+  playSuccessChime();
+  showToast(`Zapisy OTWARTE! Czat wpisuje "${state.giveaway.keyword}", aby wziąć udział.`, 'success');
+  broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+}
+
+function closeGiveawayRegistration() {
+  state.giveaway.isOpen = false;
+  updateGiveawayUI();
+  playErrorBuzzer();
+  showToast(`Zapisy ZAMKNIĘTE. Zapisano ${state.giveaway.participants.size} uczestników.`, 'info');
+  broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+}
+
+function handleGiveawayMessage(username, text) {
+  if (!state.giveaway.isOpen) return;
+
+  const targetKw = state.giveaway.keyword.toLowerCase();
+  const msgLower = text.toLowerCase();
+
+  // If message equals or starts with the keyword
+  if (msgLower === targetKw || msgLower.startsWith(targetKw + ' ') || msgLower.endsWith(' ' + targetKw)) {
+    if (!state.giveaway.participants.has(username)) {
+      state.giveaway.participants.add(username);
+      updateGiveawayParticipantsUI();
+      playTickSound(1000);
+    }
+  }
+}
+
+function updateGiveawayUI() {
+  const kwBadge = document.getElementById('giveaway-keyword-badge');
+  const pill = document.getElementById('giveaway-status-pill');
+  const btnOpen = document.getElementById('btn-giveaway-open');
+  const btnClose = document.getElementById('btn-giveaway-close');
+
+  if (kwBadge) kwBadge.innerText = state.giveaway.keyword;
+
+  if (pill) {
+    if (state.giveaway.isOpen) {
+      pill.className = 'giveaway-status-badge open';
+      pill.innerText = '🟢 Zapisy Otwarte (Czat Dołącza)';
+    } else {
+      pill.className = 'giveaway-status-badge closed';
+      pill.innerText = '🔴 Zapisy Zamknięte';
+    }
+  }
+
+  if (btnOpen) btnOpen.disabled = state.giveaway.isOpen;
+  if (btnClose) btnClose.disabled = !state.giveaway.isOpen;
+
+  updateGiveawayParticipantsUI();
+}
+
+function updateGiveawayParticipantsUI() {
+  const countDisplay = document.getElementById('giveaway-participants-count');
+  const sidebarCount = document.getElementById('sidebar-giveaway-count');
+  const listEl = document.getElementById('giveaway-participants-list');
+
+  const count = state.giveaway.participants.size;
+  if (countDisplay) countDisplay.innerText = count;
+  if (sidebarCount) sidebarCount.innerText = count;
+
+  if (listEl) {
+    if (count === 0) {
+      listEl.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1.5rem; font-size: 0.85rem;">Brak zapisanych uczestników.</div>';
+    } else {
+      listEl.innerHTML = Array.from(state.giveaway.participants).map((u, i) => `
+        <div class="leader-item">
+          <div class="leader-left">
+            <span class="rank-badge">${i + 1}</span>
+            <span class="leader-name">@${u}</span>
+          </div>
+          <span style="font-size: 0.75rem; color: var(--accent-emerald);">Zapisany ✓</span>
+        </div>
+      `).join('');
+    }
+  }
+}
+
+function rollGiveawayWinner() {
+  const entrants = Array.from(state.giveaway.participants);
+  if (entrants.length === 0) {
+    showToast('Brak uczestników do losowania! Otwórz najpierw zapisy.', 'warning');
+    return;
+  }
+
+  // Close registration automatically before drawing
+  state.giveaway.isOpen = false;
+  state.giveaway.isRolling = true;
+  updateGiveawayUI();
+
+  const spinnerBox = document.getElementById('giveaway-spinner-container');
+  const spinnerText = document.getElementById('giveaway-spinner-text');
+  const idleHint = document.getElementById('giveaway-idle-hint');
+  const winnerCard = document.getElementById('giveaway-winner-card');
+
+  if (idleHint) idleHint.style.display = 'none';
+  if (winnerCard) winnerCard.style.display = 'none';
+  if (spinnerText) spinnerText.style.display = 'block';
+  if (spinnerBox) spinnerBox.classList.add('rolling');
+
+  // Animated Roulette Spinner with decelerating interval
+  let speed = 50;
+  let elapsed = 0;
+  const totalDuration = 3200; // 3.2 seconds roll
+
+  function spinStep() {
+    const randomPick = entrants[Math.floor(Math.random() * entrants.length)];
+    if (spinnerText) spinnerText.innerText = `@${randomPick}`;
+    playTickSound(700 + Math.random() * 400);
+
+    elapsed += speed;
+    speed += 15; // Deceleration curve
+
+    if (elapsed < totalDuration) {
+      setTimeout(spinStep, speed);
+    } else {
+      // Pick Final Winner!
+      const finalWinner = entrants[Math.floor(Math.random() * entrants.length)];
+      finishGiveawayRoll(finalWinner);
+    }
+  }
+
+  spinStep();
+}
+
+function finishGiveawayRoll(winner) {
+  state.giveaway.isRolling = false;
+  state.giveaway.winner = winner;
+
+  const spinnerBox = document.getElementById('giveaway-spinner-container');
+  const spinnerText = document.getElementById('giveaway-spinner-text');
+  const winnerCard = document.getElementById('giveaway-winner-card');
+  const winnerName = document.getElementById('giveaway-winner-name');
+  const winnerDetails = document.getElementById('giveaway-winner-details');
+
+  if (spinnerBox) spinnerBox.classList.remove('rolling');
+  if (spinnerText) spinnerText.style.display = 'none';
+
+  if (winnerCard && winnerName) {
+    winnerCard.style.display = 'flex';
+    winnerName.innerText = `@${winner}`;
+    if (winnerDetails) {
+      const prizeText = state.giveaway.prize ? `Nagroda: ${state.giveaway.prize} • ` : '';
+      winnerDetails.innerText = `${prizeText}Wyłoniono spośród ${state.giveaway.participants.size} uczestników`;
+    }
+  }
+
+  // Add to session history
+  state.giveaway.history.unshift({
+    winner,
+    time: new Date().toLocaleTimeString(),
+    entrants: state.giveaway.participants.size
+  });
+  updateGiveawayHistoryUI();
+
+  playFanfare();
+  launchConfetti(4500);
+  showToast(`🎉 ZWYCIĘZCA: @${winner}! Gratulacje!`, 'success');
+  broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+}
+
+function updateGiveawayHistoryUI() {
+  const container = document.getElementById('giveaway-history-list');
+  if (!container) return;
+
+  if (state.giveaway.history.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.85rem;">Brak wcześniejszych losowań.</div>';
+    return;
+  }
+
+  container.innerHTML = state.giveaway.history.map(h => `
+    <div class="leader-item rank-1">
+      <div class="leader-left">
+        <span style="font-size: 1.1rem;">👑</span>
+        <span class="leader-name">@${h.winner}</span>
+      </div>
+      <span style="font-size: 0.75rem; color: var(--text-muted);">${h.time} (${h.entrants} os.)</span>
+    </div>
+  `).join('');
+}
+
+function clearGiveawayParticipants() {
+  if (confirm("Czy na pewno chcesz wyczyścić listę zapisanych osób?")) {
+    state.giveaway.participants.clear();
+    state.giveaway.winner = null;
+
+    const winnerCard = document.getElementById('giveaway-winner-card');
+    const idleHint = document.getElementById('giveaway-idle-hint');
+    if (winnerCard) winnerCard.style.display = 'none';
+    if (idleHint) idleHint.style.display = 'block';
+
+    updateGiveawayUI();
+    showToast("Wyczyszczono listę uczestników losowania.", "info");
+    broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+  }
+}
+
+// ============================================================================
+// MODULE 3: WISIELEC / ZGADYWANKA ("WYBRANIEC CZATU")
+// ============================================================================
+function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '') {
   state.hangman.word = word.toUpperCase().trim();
   state.hangman.category = category;
   state.hangman.hint = hint;
@@ -909,7 +1044,6 @@ function setupHangmanWord(word, category = 'Gry', hint = '') {
   state.hangman.livesLeft = state.hangman.maxLives;
   state.hangman.state = 'playing';
 
-  // Automatically reveal spaces, hyphens and punctuation
   for (const ch of state.hangman.word) {
     if (!ch.match(/[A-ZĄĆĘŁŃÓŚŹŻ]/i)) {
       state.hangman.revealedLetters.add(ch);
@@ -918,22 +1052,19 @@ function setupHangmanWord(word, category = 'Gry', hint = '') {
 
   renderHangmanUI();
   broadcastSync('HANGMAN_UPDATE', state.hangman);
-  showToast(`Rozpoczęto hasło z kategorii: ${category}`, 'info');
+  showToast(`Rozpoczęto hasło: ${category}`, 'info');
 
-  // Automatically roll active chatter if in Wybraniec mode
   if (state.hangman.turnMode === 'chatter') {
     rollActiveChatter();
   }
 }
 
 function renderHangmanUI() {
-  // Category & Hint
   const catDisplay = document.getElementById('hangman-category-display');
   const hintDisplay = document.getElementById('hangman-hint-display');
   if (catDisplay) catDisplay.innerText = state.hangman.category;
   if (hintDisplay) hintDisplay.innerText = state.hangman.hint ? `💡 Podpowiedź: ${state.hangman.hint}` : '';
 
-  // Hearts / Lives
   for (let i = 1; i <= state.hangman.maxLives; i++) {
     const heart = document.getElementById(`heart-${i}`);
     if (heart) {
@@ -950,7 +1081,6 @@ function renderHangmanUI() {
   const livesNum = document.getElementById('hangman-lives-num');
   if (livesNum) livesNum.innerText = `${state.hangman.livesLeft}/${state.hangman.maxLives}`;
 
-  // Word Board Tiles (Segmented by words for clean line breaks)
   const board = document.getElementById('hangman-board');
   if (board) {
     board.innerHTML = '';
@@ -963,7 +1093,6 @@ function renderHangmanUI() {
       for (let i = 0; i < w.length; i++) {
         const char = w[i];
         const isRevealed = state.hangman.revealedLetters.has(char);
-
         const tile = document.createElement('div');
         tile.className = `letter-tile ${isRevealed ? 'revealed' : ''}`;
         tile.innerText = isRevealed ? char : '';
@@ -972,7 +1101,6 @@ function renderHangmanUI() {
 
       board.appendChild(segment);
 
-      // Add space tile between words
       if (wIdx < words.length - 1) {
         const spaceTile = document.createElement('div');
         spaceTile.className = 'letter-tile space';
@@ -981,7 +1109,6 @@ function renderHangmanUI() {
     });
   }
 
-  // Wrong letters chips
   const wrongContainer = document.getElementById('wrong-letters-chips');
   if (wrongContainer) {
     if (state.hangman.wrongLetters.size === 0) {
@@ -994,9 +1121,6 @@ function renderHangmanUI() {
   }
 }
 
-// -------------------------------------------------------------
-// FEATURE: WYBRANIEC CZATU (Active Chatter Roller)
-// -------------------------------------------------------------
 async function refreshActiveChattersList() {
   try {
     const res = await fetch(`${API_BASE}/games/active-chatters?minutes=2`);
@@ -1033,7 +1157,7 @@ function renderActiveChattersSidebar(isFallback = false) {
 async function rollActiveChatter() {
   try {
     const res = await fetch(`${API_BASE}/games/active-chatters?minutes=2`);
-    if (!res.ok) throw new Error("Błąd pobierania aktywnych widzów");
+    if (!res.ok) throw new Error("Błąd pobierania");
     const data = await res.json();
     state.activeChatters = data.active_chatters || [];
 
@@ -1043,7 +1167,7 @@ async function rollActiveChatter() {
     }
 
     if (!chosen) {
-      showToast('Brak aktywnych osób na czacie w ostatnich 1-2 minutach! Przełączam w tryb otwarty.', 'warning');
+      showToast('Brak aktywnych osób w ostatnich 1-2 minutach! Przełączam w tryb otwarty.', 'warning');
       state.hangman.turnMode = 'all';
       updateTurnModeUI();
       return;
@@ -1057,12 +1181,9 @@ async function rollActiveChatter() {
 
 function assignTurnToChatter(username) {
   state.hangman.activeChatter = username.toLowerCase();
-  
-  // Find stats
   const info = state.activeChatters.find(c => c.username.toLowerCase() === username.toLowerCase());
   state.hangman.activeChatterInfo = info;
 
-  // Update Banner UI
   const avatar = document.getElementById('chatter-avatar-initial');
   const nameDisplay = document.getElementById('chatter-name-display');
   const subHint = document.getElementById('chatter-sub-hint');
@@ -1074,7 +1195,6 @@ function assignTurnToChatter(username) {
     subHint.innerText = `${msgCount} • Wpisz literkę lub całe hasło na czacie!`;
   }
 
-  // Turn timer 45s
   state.hangman.turnTimer = 45;
   const timerCircle = document.getElementById('chatter-turn-timer');
   if (timerCircle) timerCircle.innerText = '45';
@@ -1083,7 +1203,6 @@ function assignTurnToChatter(username) {
   state.hangman.turnInterval = setInterval(() => {
     state.hangman.turnTimer--;
     if (timerCircle) timerCircle.innerText = state.hangman.turnTimer;
-
     if (state.hangman.turnTimer <= 0) {
       clearInterval(state.hangman.turnInterval);
       showToast(`Czas gracza @${username} minął! Losuję kolejną osobę.`, 'warning');
@@ -1124,7 +1243,6 @@ function updateTurnModeUI() {
 }
 
 function handleHangmanMessage(username, text) {
-  // If turn-based, only allow messages from the designated chatter!
   if (state.hangman.turnMode === 'chatter') {
     if (!state.hangman.activeChatter || username.toLowerCase() !== state.hangman.activeChatter) {
       return;
@@ -1134,13 +1252,9 @@ function handleHangmanMessage(username, text) {
   const clean = text.toUpperCase().trim();
   if (!clean) return;
 
-  // Case A: Chatter guessed the entire phrase!
   const targetNormalized = state.hangman.word.replace(/\s+/g, ' ');
   if (clean === targetNormalized || clean.replace(/\s+/g, '') === targetNormalized.replace(/\s+/g, '')) {
-    // WINNER GUESS!
-    for (const ch of state.hangman.word) {
-      state.hangman.revealedLetters.add(ch);
-    }
+    for (const ch of state.hangman.word) state.hangman.revealedLetters.add(ch);
     renderHangmanUI();
     addPointsToUser(username, 500, false, true);
 
@@ -1152,19 +1266,15 @@ function handleHangmanMessage(username, text) {
     return;
   }
 
-  // Case B: Chatter guessed a single letter
-  // Take first alphabetical character (Polish characters supported: A-Z, Ą, Ć, Ę, Ł, Ń, Ó, Ś, Ź, Ż)
   const letters = clean.match(/[A-ZĄĆĘŁŃÓŚŹŻ]/gi);
   if (!letters || letters.length === 0) return;
   const guess = letters[0].toUpperCase();
 
-  // Already revealed or already marked wrong?
   if (state.hangman.revealedLetters.has(guess) || state.hangman.wrongLetters.has(guess)) {
     return;
   }
 
   if (state.hangman.word.includes(guess)) {
-    // CORRECT LETTER!
     state.hangman.revealedLetters.add(guess);
     addPointsToUser(username, 100, false, true);
     playSuccessChime();
@@ -1172,7 +1282,6 @@ function handleHangmanMessage(username, text) {
 
     renderHangmanUI();
 
-    // Check if word is fully solved
     let allRevealed = true;
     for (const ch of state.hangman.word) {
       if (!state.hangman.revealedLetters.has(ch)) {
@@ -1186,12 +1295,8 @@ function handleHangmanMessage(username, text) {
       playFanfare();
       launchConfetti(4500);
       showToast(`🏆 Brawo! Całe hasło zostało odgadnięte: "${state.hangman.word}"!`, 'success');
-    } else {
-      // In Wybraniec mode, chatter keeps their turn or streamer rolls next
-      showToast(`Gracz @${username} zachowuje turę lub możesz wylosować nowego gracza!`, 'info');
     }
   } else {
-    // WRONG LETTER!
     state.hangman.wrongLetters.add(guess);
     state.hangman.livesLeft = Math.max(0, state.hangman.livesLeft - 1);
     playErrorBuzzer();
@@ -1204,7 +1309,6 @@ function handleHangmanMessage(username, text) {
       revealHangmanWord();
       showToast(`💀 Koniec szans! Prawidłowe hasło to: "${state.hangman.word}"`, 'error');
     } else {
-      // Automatically roll next active chatter!
       if (state.hangman.turnMode === 'chatter') {
         setTimeout(() => rollActiveChatter(), 1200);
       }
@@ -1215,9 +1319,7 @@ function handleHangmanMessage(username, text) {
 }
 
 function revealHangmanWord() {
-  for (const ch of state.hangman.word) {
-    state.hangman.revealedLetters.add(ch);
-  }
+  for (const ch of state.hangman.word) state.hangman.revealedLetters.add(ch);
   renderHangmanUI();
   broadcastSync('HANGMAN_UPDATE', state.hangman);
   showToast(`Odsłonięto hasło: ${state.hangman.word}`, 'info');
@@ -1242,7 +1344,7 @@ function applyCustomWord() {
 }
 
 // ============================================================================
-// GLOBAL LEADERBOARD & EXCEL/CSV EXPORT
+// GLOBAL SESSION LEADERBOARD & EXCEL/CSV EXPORT
 // ============================================================================
 function addPointsToUser(username, points, isQuiz = false, isHangman = false) {
   const norm = username.toLowerCase();
@@ -1273,7 +1375,7 @@ function renderGlobalLeaderboard() {
     tbody.innerHTML = `
       <tr>
         <td colspan="6" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
-          Brak zarejestrowanych punktów w bieżącej sesji. Rozpocznij quiz lub wisielca na czacie!
+          Brak zarejestrowanych punktów w bieżącej sesji.
         </td>
       </tr>
     `;
@@ -1366,7 +1468,7 @@ async function exportQuizCSV() {
 }
 
 // ============================================================================
-// OBS OVERLAY MODAL & UTILS
+// OBS OVERLAY UTILS & MODALS
 // ============================================================================
 function openOBSModal() {
   updateOBSUrls();
@@ -1378,15 +1480,21 @@ function updateOBSUrls() {
   const pwdParam = state.authPassword ? `&password=${encodeURIComponent(state.authPassword)}` : '';
 
   const quizInput = document.getElementById('obs-url-quiz');
+  const giveawayInput = document.getElementById('obs-url-giveaway');
   const hangmanInput = document.getElementById('obs-url-hangman');
 
   if (quizInput) quizInput.value = `${base}?overlay=1&game=quiz${pwdParam}`;
+  if (giveawayInput) giveawayInput.value = `${base}?overlay=1&game=giveaway${pwdParam}`;
   if (hangmanInput) hangmanInput.value = `${base}?overlay=1&game=hangman${pwdParam}`;
 }
 
 function copyOBSUrl(gameType) {
-  const inputId = gameType === 'quiz' ? 'obs-url-quiz' : 'obs-url-hangman';
-  const input = document.getElementById(inputId);
+  const inputMap = {
+    quiz: 'obs-url-quiz',
+    giveaway: 'obs-url-giveaway',
+    hangman: 'obs-url-hangman'
+  };
+  const input = document.getElementById(inputMap[gameType]);
   if (input) {
     input.select();
     navigator.clipboard.writeText(input.value);
@@ -1399,16 +1507,14 @@ function closeModal(modalId) {
   if (modal) modal.classList.remove('active');
 }
 
-// Close modals on clicking overlay background
 window.addEventListener('click', (e) => {
   if (e.target.classList.contains('modal-overlay')) {
     e.target.classList.remove('active');
   }
 });
 
-// Toast Notifications
 function showToast(message, type = 'info') {
-  if (state.isOverlay) return; // Silent in OBS stream overlay
+  if (state.isOverlay) return;
   const container = document.getElementById('toast-container');
   if (!container) return;
 

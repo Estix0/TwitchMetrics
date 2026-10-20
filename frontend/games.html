@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TwitchStreamGames - Interaktywny Quiz & Wisielec na Streamie</title>
+  <title>TwitchStreamGames - Interaktywny Quiz, Losowanie & Wisielec na Streamie</title>
   
   <!-- Modern Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,7 +15,7 @@
 </head>
 <body>
 
-  <!-- Confetti Canvas for Victory Celebrations -->
+  <!-- Confetti Canvas for Victory & Giveaway Celebrations -->
   <canvas id="confetti-canvas"></canvas>
 
   <div class="games-container">
@@ -33,6 +33,9 @@
       <div class="game-mode-tabs">
         <button class="game-tab-btn active" id="tab-btn-quiz" onclick="switchGameMode('quiz')">
           🏆 <span>Quiz Czatu</span>
+        </button>
+        <button class="game-tab-btn" id="tab-btn-giveaway" onclick="switchGameMode('giveaway')">
+          🎁 <span>Losowanie (Giveaway)</span>
         </button>
         <button class="game-tab-btn" id="tab-btn-hangman" onclick="switchGameMode('hangman')">
           🎯 <span>Wisielec ("Wybraniec")</span>
@@ -64,7 +67,7 @@
     </header>
 
     <!-- ======================================================================
-         MODULE 1: QUIZ CZATU
+         MODULE 1: QUIZ CZATU (Własne pytania, ukryte procenty, import)
          ====================================================================== -->
     <main id="view-quiz" class="game-view-content active">
       <div class="game-grid-host">
@@ -72,9 +75,15 @@
         <!-- Left: Quiz Stage Card -->
         <div class="quiz-stage-card glass-panel">
           
-          <!-- Category & Timer Bar -->
+          <!-- Category & Progress Info Bar -->
           <div class="quiz-badge-bar">
-            <span class="category-tag" id="quiz-category-display">🎮 Gry & Gaming</span>
+            <div style="display: flex; align-items: center; gap: 0.65rem;">
+              <span class="category-tag" id="quiz-category-display">📋 Pytanie <span id="quiz-index-indicator">0 / 0</span></span>
+              <span class="category-tag" id="quiz-votes-counter-badge" style="background: rgba(0, 230, 203, 0.12); border-color: rgba(0, 230, 203, 0.3); color: var(--accent-cyan);">
+                👥 Oddane głosy: <strong id="quiz-votes-counter" style="margin-left: 0.3rem;">0</strong>
+              </span>
+            </div>
+
             <div class="quiz-timer-display" id="quiz-timer-badge">
               ⏱️ <span id="quiz-timer-sec">30</span>s
             </div>
@@ -87,74 +96,82 @@
 
           <!-- Main Question Text -->
           <div class="quiz-question-text" id="quiz-question-display">
-            Wybierz lub wylosuj pytanie poniżej, aby rozpocząć rundę quizu dla widzów!
+            Brak załadowanych pytań. Kliknij poniżej "Importuj Pytania" lub "Dodaj Pytanie", aby wkleić swój quiz!
           </div>
 
-          <!-- Options Grid (A, B, C, D) -->
+          <!-- Options Grid (A, B, C, D) - When voting is active, counts/percentages are HIDDEN! -->
           <div class="quiz-options-grid" id="quiz-options-container">
             <div class="option-card" data-key="A">
               <div class="option-progress-bg" id="opt-prog-A"></div>
               <div class="option-key">A</div>
-              <div class="option-text" id="opt-text-A">Opcja A</div>
+              <div class="option-text" id="opt-text-A">Brak pytania</div>
               <div class="option-votes-badge" id="opt-count-A">0 odp.</div>
             </div>
             <div class="option-card" data-key="B">
               <div class="option-progress-bg" id="opt-prog-B"></div>
               <div class="option-key">B</div>
-              <div class="option-text" id="opt-text-B">Opcja B</div>
+              <div class="option-text" id="opt-text-B">Brak pytania</div>
               <div class="option-votes-badge" id="opt-count-B">0 odp.</div>
             </div>
             <div class="option-card" data-key="C">
               <div class="option-progress-bg" id="opt-prog-C"></div>
               <div class="option-key">C</div>
-              <div class="option-text" id="opt-text-C">Opcja C</div>
+              <div class="option-text" id="opt-text-C">Brak pytania</div>
               <div class="option-votes-badge" id="opt-count-C">0 odp.</div>
             </div>
             <div class="option-card" data-key="D">
               <div class="option-progress-bg" id="opt-prog-D"></div>
               <div class="option-key">D</div>
-              <div class="option-text" id="opt-text-D">Opcja D</div>
+              <div class="option-text" id="opt-text-D">Brak pytania</div>
               <div class="option-votes-badge" id="opt-count-D">0 odp.</div>
             </div>
           </div>
 
-          <!-- Round Summary / Podium Card (shown after answer reveal) -->
+          <!-- Round Summary / Podium Card (Revealed after round finishes) -->
           <div id="quiz-round-podium" class="glass-panel" style="display: none; padding: 1.25rem; border: 1px solid var(--accent-emerald);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-              <h4 style="color: var(--accent-emerald); font-size: 1.1rem;">🎉 Poprawna odpowiedź: <span id="podium-correct-letter">B</span>!</h4>
-              <span id="podium-stats-sub" style="font-size: 0.85rem; color: var(--text-secondary);">14 poprawnych odpowiedzi</span>
+              <h4 style="color: var(--accent-emerald); font-size: 1.15rem;">🎉 Poprawna odpowiedź: <span id="podium-correct-letter">A</span>!</h4>
+              <span id="podium-stats-sub" style="font-size: 0.85rem; color: var(--text-secondary);">Poprawne odpowiedzi: 0</span>
             </div>
-            <div id="podium-list" style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
-              <!-- Dynamic fastest chatters -->
-            </div>
+            <div id="podium-list" style="display: flex; gap: 0.65rem; flex-wrap: wrap;"></div>
           </div>
 
-          <!-- Host Controls Toolbar -->
-          <div class="host-controls-bar host-only-element">
-            <div style="display: flex; gap: 0.65rem; align-items: center; flex-wrap: wrap;">
+          <!-- UNIFIED HOST ACTION DOCK (Clean, ergonomic streamer controls) -->
+          <div class="host-action-dock host-only-element">
+            <div class="dock-group">
               <button class="btn btn-success" id="btn-quiz-start" onclick="startQuizRound()">
-                🚀 Rozpocznij Pytanie
+                🚀 Rozpocznij Głosowanie
               </button>
               <button class="btn btn-amber" id="btn-quiz-reveal" onclick="revealQuizAnswer()" disabled>
                 ⏹️ Zakończ i Odsłoń
               </button>
-              <button class="btn btn-primary" onclick="loadNextPresetQuestion()">
-                ⏭️ Następne Pytanie
+              <button class="btn btn-secondary btn-icon" id="btn-quiz-prev" onclick="stepQuizQuestion(-1)" title="Poprzednie pytanie">
+                ◀
               </button>
-              <button class="btn btn-secondary" onclick="openAddQuestionModal()">
-                ➕ Własne Pytanie
+              <button class="btn btn-secondary btn-icon" id="btn-quiz-next" onclick="stepQuizQuestion(1)" title="Następne pytanie">
+                ▶
               </button>
             </div>
 
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
-              <span style="font-size: 0.85rem; color: var(--text-muted);">Czas:</span>
-              <select id="select-quiz-time" class="input-field" style="width: auto; padding: 0.45rem 0.75rem;">
-                <option value="15">15 sekund</option>
-                <option value="30" selected>30 sekund</option>
-                <option value="45">45 sekund</option>
-                <option value="60">60 sekund</option>
-                <option value="0">Ręczny (bez limitu)</option>
+            <div class="dock-group">
+              <button class="btn btn-primary" onclick="openBulkImportModal()" title="Szybki import pytań z tekstu lub CSV">
+                📥 Importuj Pytania (Wklej tekst)
+              </button>
+              <button class="btn btn-secondary" onclick="openQuestionManagerModal()" title="Zarządzaj załadowanymi pytaniami">
+                📋 Baza Pytań (<span id="btn-count-loaded-q">0</span>)
+              </button>
+              
+              <select id="select-quiz-time" class="input-field" style="width: auto; padding: 0.5rem 0.8rem; font-weight: 600;">
+                <option value="15">⏱️ 15s</option>
+                <option value="30" selected>⏱️ 30s</option>
+                <option value="45">⏱️ 45s</option>
+                <option value="60">⏱️ 60s</option>
+                <option value="0">⏱️ Ręczny</option>
               </select>
+
+              <button class="btn btn-secondary" onclick="exportQuizCSV()" title="Eksportuj wyniki do pliku Excel CSV">
+                📥 CSV
+              </button>
             </div>
           </div>
 
@@ -163,11 +180,10 @@
         <!-- Right: Quiz Host Sidebar -->
         <aside class="sidebar-panel host-only-element">
           
-          <!-- Round Stats & Live Stream -->
+          <!-- Live Chatter Feed (Answers hidden while voting is active!) -->
           <div class="sidebar-card glass-panel">
             <div class="card-title">
-              <span>💬 Odpowiedzi w Tej Rundzie</span>
-              <span class="category-tag" id="live-answers-total-badge" style="margin-left: auto;">0</span>
+              <span>💬 Aktywność Widzów (Runda)</span>
             </div>
             <div class="live-stream-log" id="quiz-live-log">
               <div style="color: var(--text-muted); text-align: center; padding: 1rem;">
@@ -176,31 +192,18 @@
             </div>
           </div>
 
-          <!-- Preset Question Packs -->
+          <!-- Fast Question Switcher -->
           <div class="sidebar-card glass-panel">
             <div class="card-title">
-              <span>📚 Gotowe Pakiety Pytań</span>
+              <span>📑 Twoje Pytania</span>
+              <button class="btn btn-secondary btn-icon" onclick="openQuestionManagerModal()" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">Zarządzaj</button>
             </div>
-            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-              <button class="btn btn-secondary" style="justify-content: flex-start;" onclick="loadQuestionPack('gaming')">
-                🎮 Gry Komputerowe & Lore
-              </button>
-              <button class="btn btn-secondary" style="justify-content: flex-start;" onclick="loadQuestionPack('twitch')">
-                📺 Twitch & Kultura Internetu
-              </button>
-              <button class="btn btn-secondary" style="justify-content: flex-start;" onclick="loadQuestionPack('popculture')">
-                🎬 Filmy, Seriale & Muzyka
-              </button>
-              <button class="btn btn-secondary" style="justify-content: flex-start;" onclick="loadQuestionPack('general')">
-                🧠 Wiedza Ogólna & Ciekawostki
-              </button>
+            <div class="mini-leaderboard-list" id="quick-question-list">
+              <div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.85rem;">
+                Brak pytań. Kliknij "Importuj Pytania" powyżej.
+              </div>
             </div>
           </div>
-
-          <!-- Quick Export CSV -->
-          <button class="btn btn-primary" onclick="exportQuizCSV()" style="width: 100%;">
-            📥 Pobierz Wyniki do Excel (CSV)
-          </button>
 
         </aside>
 
@@ -208,7 +211,125 @@
     </main>
 
     <!-- ======================================================================
-         MODULE 2: WISIELEC / ZGADYWANKA SŁOWNA ("WYBRANIEC CZATU")
+         MODULE 2: LOSOWANIE / GIVEAWAY KEYWORD (Wybór usera z czatu)
+         ====================================================================== -->
+    <main id="view-giveaway" class="game-view-content">
+      <div class="game-grid-host">
+        
+        <!-- Left: Giveaway Stage Card -->
+        <div class="giveaway-stage-card glass-panel">
+          
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <span class="category-tag" style="background: rgba(245, 166, 35, 0.15); border-color: rgba(245, 166, 35, 0.4); color: var(--accent-amber); font-size: 0.9rem;">
+                🔑 Słowo kluczowe: <strong id="giveaway-keyword-badge" style="color: #fff; margin-left: 0.35rem;">!losowanie</strong>
+              </span>
+              <span class="giveaway-status-badge closed" id="giveaway-status-pill">
+                🔴 Zapisy Zamknięte
+              </span>
+            </div>
+
+            <div style="font-size: 1.1rem; font-weight: 800; color: #fff;">
+              👥 Zapisanych: <span id="giveaway-participants-count" style="color: var(--accent-cyan); font-size: 1.35rem;">0</span> widzów
+            </div>
+          </div>
+
+          <!-- Big Animated Spinner / Winner Display -->
+          <div class="giveaway-spinner-box" id="giveaway-spinner-container">
+            <div id="giveaway-idle-hint" style="color: var(--text-secondary); font-size: 1.1rem;">
+              <span style="font-size: 2.2rem; display: block; margin-bottom: 0.5rem;">🎁</span>
+              Otwórz zapisy, aby widzowie mogli dołączać wpisując słowo kluczowe na czacie!
+            </div>
+
+            <div class="spinner-name" id="giveaway-spinner-text" style="display: none;">
+              ---
+            </div>
+
+            <!-- Winner Reveal Card -->
+            <div class="winner-card-reveal" id="giveaway-winner-card" style="display: none;">
+              <div style="display: flex; align-items: center; gap: 1.25rem;">
+                <div style="font-size: 3rem;">👑</div>
+                <div style="text-align: left;">
+                  <div style="font-size: 0.85rem; color: var(--accent-amber); font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;">
+                    🎉 Zwycięzca Losowania!
+                  </div>
+                  <div id="giveaway-winner-name" style="font-size: 2.2rem; font-weight: 900; color: #fff; line-height: 1.1;">
+                    @username
+                  </div>
+                  <div id="giveaway-winner-details" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                    Wyłoniono spośród 0 uczestników
+                  </div>
+                </div>
+              </div>
+
+              <button class="btn btn-amber" onclick="rollGiveawayWinner()" title="Wylosuj ponownie jeśli zwycięzca jest AFK">
+                🔄 Wylosuj Ponownie (Reroll)
+              </button>
+            </div>
+          </div>
+
+          <!-- Host Action Dock for Giveaway -->
+          <div class="host-action-dock host-only-element">
+            <div class="dock-group">
+              <button class="btn btn-success" id="btn-giveaway-open" onclick="startGiveawayRegistration()">
+                ▶️ Otwórz Zapisy na Czacie
+              </button>
+              <button class="btn btn-amber" id="btn-giveaway-close" onclick="closeGiveawayRegistration()" disabled>
+                ⏹️ Zamknij Zapisy
+              </button>
+              <button class="btn btn-primary" id="btn-giveaway-roll" onclick="rollGiveawayWinner()" style="font-size: 1rem; padding: 0.6rem 1.4rem;">
+                🎲 WYLOSUJ ZWYCIĘZCĘ
+              </button>
+            </div>
+
+            <div class="dock-group">
+              <button class="btn btn-secondary" onclick="openGiveawaySettingsModal()">
+                ⚙️ Ustaw Słowo Kluczowe
+              </button>
+              <button class="btn btn-danger" onclick="clearGiveawayParticipants()">
+                🗑️ Wyczyść Listę
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Right: Giveaway Participants Sidebar -->
+        <aside class="sidebar-panel host-only-element">
+          
+          <div class="sidebar-card glass-panel">
+            <div class="card-title">
+              <span>🎟️ Uczestnicy Losowania</span>
+              <span class="category-tag" id="sidebar-giveaway-count" style="margin-left: auto;">0</span>
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">
+              Każdy widz dopisywany jest tylko raz (brak duplikatów).
+            </div>
+            <div class="mini-leaderboard-list" id="giveaway-participants-list">
+              <div style="color: var(--text-muted); text-align: center; padding: 1.5rem; font-size: 0.85rem;">
+                Brak zapisanych uczestników.
+              </div>
+            </div>
+          </div>
+
+          <div class="sidebar-card glass-panel">
+            <div class="card-title">
+              <span>🏆 Poprzedni Zwycięzcy</span>
+            </div>
+            <div class="mini-leaderboard-list" id="giveaway-history-list">
+              <div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.85rem;">
+                Brak wcześniejszych losowań.
+              </div>
+            </div>
+          </div>
+
+        </aside>
+
+      </div>
+    </main>
+
+    <!-- ======================================================================
+         MODULE 3: WISIELEC / ZGADYWANKA ("WYBRANIEC CZATU")
          ====================================================================== -->
     <main id="view-hangman" class="game-view-content">
       <div class="game-grid-host">
@@ -216,14 +337,13 @@
         <!-- Left: Hangman Stage Card -->
         <div class="hangman-stage-card glass-panel">
           
-          <!-- Category & Lives Meter -->
           <div class="hangman-top-bar">
             <div>
-              <span class="category-tag" id="hangman-category-display">🎮 Kategoria: Gry Komputerowe</span>
+              <span class="category-tag" id="hangman-category-display">🎯 Hasło</span>
               <span id="hangman-hint-display" style="margin-left: 0.75rem; font-size: 0.85rem; color: var(--text-secondary);"></span>
             </div>
 
-            <!-- Stream-safe Hearts Display -->
+            <!-- Hearts Lives Meter -->
             <div class="lives-meter" id="hangman-lives-container" title="Pozostałe szanse">
               <span class="heart-icon" id="heart-1">❤️</span>
               <span class="heart-icon" id="heart-2">❤️</span>
@@ -235,14 +355,10 @@
             </div>
           </div>
 
-          <!-- Secret Word Board -->
-          <div class="secret-word-board" id="hangman-board">
-            <!-- Dynamic letter tiles injected here -->
-          </div>
+          <!-- Secret Word Board Tiles -->
+          <div class="secret-word-board" id="hangman-board"></div>
 
-          <!-- ================================================================
-               FEATURE: WYBRANIEC CZATU (Active Chatter Turn Banner)
-               ================================================================ -->
+          <!-- WYBRANIEC CZATU (Active Chatter Turn Banner) -->
           <div class="active-chatter-turn-card" id="hangman-chatter-banner">
             <div class="chatter-avatar" id="chatter-avatar-initial">?</div>
             <div class="chatter-info-box">
@@ -270,9 +386,9 @@
             </div>
           </div>
 
-          <!-- Host Controls Toolbar -->
-          <div class="host-controls-bar host-only-element" style="width: 100%;">
-            <div style="display: flex; gap: 0.65rem; align-items: center; flex-wrap: wrap;">
+          <!-- Host Action Dock for Hangman -->
+          <div class="host-action-dock host-only-element" style="width: 100%;">
+            <div class="dock-group">
               <button class="btn btn-primary" onclick="rollActiveChatter()" title="Wylosuj osobę z czatu z ostatnich 1-2 minut">
                 🎲 Wylosuj Aktywnego Widza (1-2 min)
               </button>
@@ -280,14 +396,11 @@
                 ⏭️ Pomiń (AFK)
               </button>
               <button class="btn btn-secondary" onclick="openCustomWordModal()">
-                ✏️ Własne Hasło
-              </button>
-              <button class="btn btn-secondary" onclick="loadRandomWordPreset()">
-                🎲 Losowe z Bazy
+                ✏️ Ustaw Własne Hasło
               </button>
             </div>
 
-            <div style="display: flex; gap: 0.65rem; align-items: center;">
+            <div class="dock-group">
               <button class="btn btn-secondary" id="btn-turn-mode-toggle" onclick="toggleTurnMode()" title="Przełącz tryb gry">
                 👤 Tryb: Wybraniec
               </button>
@@ -299,37 +412,21 @@
 
         </div>
 
-        <!-- Right: Hangman Host Sidebar -->
+        <!-- Right: Hangman Active Pool Sidebar -->
         <aside class="sidebar-panel host-only-element">
           
-          <!-- Recent Active Chatters Pool (1-2 minutes) -->
           <div class="sidebar-card glass-panel">
             <div class="card-title">
               <span>👥 Aktywni na Czacie (1-2 min)</span>
               <button class="btn btn-secondary btn-icon" onclick="refreshActiveChattersList()" title="Odśwież listę">🔄</button>
             </div>
             <div style="font-size: 0.8rem; color: var(--text-muted);">
-              Kliknij na dowolnego widza, aby przekazać mu bezpośrednio turę:
+              Kliknij dowolnego widza, aby natychmiast przypisać mu turę:
             </div>
             <div class="mini-leaderboard-list" id="active-chatters-pool">
               <div style="color: var(--text-muted); text-align: center; padding: 1rem;">
                 Ładowanie aktywnych widzów...
               </div>
-            </div>
-          </div>
-
-          <!-- Quick Word Categories -->
-          <div class="sidebar-card glass-panel">
-            <div class="card-title">
-              <span>📚 Gotowe Kategorie Haseł</span>
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
-              <button class="btn btn-secondary" style="font-size: 0.8rem;" onclick="loadWordFromCategory('gry')">🎮 Gry</button>
-              <button class="btn btn-secondary" style="font-size: 0.8rem;" onclick="loadWordFromCategory('filmy')">🎬 Filmy</button>
-              <button class="btn btn-secondary" style="font-size: 0.8rem;" onclick="loadWordFromCategory('jedzenie')">🍕 Jedzenie</button>
-              <button class="btn btn-secondary" style="font-size: 0.8rem;" onclick="loadWordFromCategory('zwierzeta')">🦁 Zwierzęta</button>
-              <button class="btn btn-secondary" style="font-size: 0.8rem;" onclick="loadWordFromCategory('przyslowia')">🇵🇱 Przysłowia</button>
-              <button class="btn btn-secondary" style="font-size: 0.8rem;" onclick="loadWordFromCategory('twitch')">📺 Twitch</button>
             </div>
           </div>
 
@@ -339,7 +436,7 @@
     </main>
 
     <!-- ======================================================================
-         MODULE 3: GLOBAL SESSION LEADERBOARD
+         MODULE 4: GLOBAL SESSION LEADERBOARD
          ====================================================================== -->
     <main id="view-leaderboard" class="game-view-content">
       <div class="quiz-stage-card glass-panel">
@@ -375,7 +472,7 @@
             <tbody id="global-leaderboard-body">
               <tr>
                 <td colspan="6" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
-                  Brak zarejestrowanych punktów w bieżącej sesji. Rozpocznij grę na czacie!
+                  Brak zarejestrowanych punktów w bieżącej sesji.
                 </td>
               </tr>
             </tbody>
@@ -390,103 +487,99 @@
        MODALS
        ====================================================================== -->
 
-  <!-- OBS Overlay Helper Modal -->
-  <div class="modal-overlay" id="modal-obs">
-    <div class="modal-box">
+  <!-- BULK IMPORT MODAL (Wklejanie tekstu / CSV) -->
+  <div class="modal-overlay" id="modal-bulk-import">
+    <div class="modal-box" style="max-width: 700px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h3 style="font-size: 1.3rem;">📺 Konfiguracja OBS Studio (Browser Source)</h3>
-        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-obs')">✕</button>
+        <h3 style="font-size: 1.3rem;">📥 Szybki Import Pytań (Wklej Tekst)</h3>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-bulk-import')">✕</button>
       </div>
 
-      <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1.25rem; line-height: 1.5;">
-        Możesz dodać poniższy link do OBS Studio jako <strong>Źródło Przeglądarki (Browser Source)</strong>. Tło jest automatycznie przezroczyste, a elementy powiększone do transmisji.
+      <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 0.75rem;">
+        Wklej pytania oddzielone pionową kreską (<code>|</code>) lub średnikiem (<code>;</code>):<br>
+        <code style="color: var(--accent-cyan); font-size: 0.8rem;">Treść pytania | Opcja A | Opcja B | Opcja C | Opcja D | Poprawna (A/B/C/D)</code>
       </p>
 
-      <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
-        <div>
-          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.35rem;">
-            Link do OBS Overlay (Quiz):
-          </label>
-          <div style="display: flex; gap: 0.5rem;">
-            <input type="text" id="obs-url-quiz" class="input-field" readonly>
-            <button class="btn btn-primary" onclick="copyOBSUrl('quiz')">Kopiuj</button>
-          </div>
-        </div>
-
-        <div>
-          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.35rem;">
-            Link do OBS Overlay (Wisielec / Zgadywanka):
-          </label>
-          <div style="display: flex; gap: 0.5rem;">
-            <input type="text" id="obs-url-hangman" class="input-field" readonly>
-            <button class="btn btn-primary" onclick="copyOBSUrl('hangman')">Kopiuj</button>
-          </div>
-        </div>
+      <div style="margin-bottom: 1rem;">
+        <textarea id="textarea-bulk-import" class="input-field" rows="10" placeholder="Wklej swoje pytania tutaj..." style="font-family: monospace; font-size: 0.85rem; resize: vertical;"></textarea>
       </div>
 
-      <div style="background: rgba(0, 0, 0, 0.3); padding: 0.85rem 1rem; border-radius: var(--radius-md); font-size: 0.825rem; color: var(--text-secondary); border-left: 3px solid var(--accent-cyan);">
-        💡 <strong>Wskazówka OBS:</strong> Ustaw w źródle przeglądarki szerokość: <strong>1920</strong>, wysokość: <strong>1080</strong>, a sterowanie prowadź w tym oknie na drugim monitorze!
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <button class="btn btn-secondary" onclick="insertExampleQuestions()">
+          💡 Wklej Przykładowe Pytania
+        </button>
+
+        <div style="display: flex; gap: 0.65rem;">
+          <button class="btn btn-secondary" onclick="closeModal('modal-bulk-import')">Anuluj</button>
+          <button class="btn btn-success" onclick="processBulkImport()">
+            Zaimportuj Pytania
+          </button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Custom Quiz Question Modal -->
-  <div class="modal-overlay" id="modal-add-question">
+  <!-- QUESTION MANAGER MODAL -->
+  <div class="modal-overlay" id="modal-question-manager">
+    <div class="modal-box" style="max-width: 750px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="font-size: 1.3rem;">📋 Baza Pytań (<span id="qm-total-count">0</span>)</h3>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-question-manager')">✕</button>
+      </div>
+
+      <div class="question-manager-list" id="qm-items-container">
+        <!-- Injected dynamically -->
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
+        <button class="btn btn-danger" onclick="clearAllQuestions()">
+          🗑️ Wyczyść Wszystkie Pytania
+        </button>
+
+        <div style="display: flex; gap: 0.65rem;">
+          <button class="btn btn-primary" onclick="openBulkImportModal()">
+            ➕ Wklej Nowe Pytania
+          </button>
+          <button class="btn btn-secondary" onclick="closeModal('modal-question-manager')">
+            Zamknij
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GIVEAWAY SETTINGS MODAL -->
+  <div class="modal-overlay" id="modal-giveaway-settings">
     <div class="modal-box">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h3 style="font-size: 1.3rem;">➕ Dodaj Własne Pytanie Quizowe</h3>
-        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-add-question')">✕</button>
+        <h3 style="font-size: 1.3rem;">⚙️ Konfiguracja Losowania (Giveaway)</h3>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-giveaway-settings')">✕</button>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 0.85rem; margin-bottom: 1.5rem;">
         <div>
-          <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">Kategoria:</label>
-          <input type="text" id="input-q-category" class="input-field" placeholder="np. Wiedźmin, Muzyka, Stream">
+          <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">
+            Słowo kluczowe do wpisania na czacie:
+          </label>
+          <input type="text" id="input-giveaway-keyword" class="input-field" placeholder="np. !losowanie, boczek, +">
         </div>
 
         <div>
-          <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">Treść pytania:</label>
-          <input type="text" id="input-q-text" class="input-field" placeholder="Wpisz treść pytania...">
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;">
-          <div>
-            <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem;">Opcja A:</label>
-            <input type="text" id="input-q-opt-A" class="input-field" placeholder="Odpowiedź A">
-          </div>
-          <div>
-            <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem;">Opcja B:</label>
-            <input type="text" id="input-q-opt-B" class="input-field" placeholder="Odpowiedź B">
-          </div>
-          <div>
-            <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem;">Opcja C:</label>
-            <input type="text" id="input-q-opt-C" class="input-field" placeholder="Odpowiedź C">
-          </div>
-          <div>
-            <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem;">Opcja D:</label>
-            <input type="text" id="input-q-opt-D" class="input-field" placeholder="Odpowiedź D">
-          </div>
-        </div>
-
-        <div>
-          <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">Poprawna odpowiedź:</label>
-          <select id="input-q-correct" class="input-field">
-            <option value="A">Opcja A</option>
-            <option value="B">Opcja B</option>
-            <option value="C">Opcja C</option>
-            <option value="D">Opcja D</option>
-          </select>
+          <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.3rem;">
+            Tytuł nagrody / Opis losowania (opcjonalnie):
+          </label>
+          <input type="text" id="input-giveaway-prize" class="input-field" placeholder="np. Klucz Steam do gry, Rola na Discordzie">
         </div>
       </div>
 
       <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
-        <button class="btn btn-secondary" onclick="closeModal('modal-add-question')">Anuluj</button>
-        <button class="btn btn-success" onclick="applyCustomQuestion()">Ustaw Pytanie</button>
+        <button class="btn btn-secondary" onclick="closeModal('modal-giveaway-settings')">Anuluj</button>
+        <button class="btn btn-success" onclick="saveGiveawaySettings()">Zapisz Ustawienia</button>
       </div>
     </div>
   </div>
 
-  <!-- Custom Word Modal (Hangman) -->
+  <!-- CUSTOM WORD MODAL (Hangman) -->
   <div class="modal-overlay" id="modal-custom-word">
     <div class="modal-box">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -514,6 +607,56 @@
       <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
         <button class="btn btn-secondary" onclick="closeModal('modal-custom-word')">Anuluj</button>
         <button class="btn btn-success" onclick="applyCustomWord()">Rozpocznij Hasło</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OBS Overlay Helper Modal -->
+  <div class="modal-overlay" id="modal-obs">
+    <div class="modal-box">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="font-size: 1.3rem;">📺 Konfiguracja OBS Studio (Browser Source)</h3>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-obs')">✕</button>
+      </div>
+
+      <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1.25rem; line-height: 1.5;">
+        Możesz dodać poniższy link do OBS Studio jako <strong>Źródło Przeglądarki (Browser Source)</strong>. Tło jest automatycznie przezroczyste, a elementy powiększone do transmisji.
+      </p>
+
+      <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.35rem;">
+            Link do OBS Overlay (Quiz):
+          </label>
+          <div style="display: flex; gap: 0.5rem;">
+            <input type="text" id="obs-url-quiz" class="input-field" readonly>
+            <button class="btn btn-primary" onclick="copyOBSUrl('quiz')">Kopiuj</button>
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.35rem;">
+            Link do OBS Overlay (Losowanie Giveaway):
+          </label>
+          <div style="display: flex; gap: 0.5rem;">
+            <input type="text" id="obs-url-giveaway" class="input-field" readonly>
+            <button class="btn btn-primary" onclick="copyOBSUrl('giveaway')">Kopiuj</button>
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.35rem;">
+            Link do OBS Overlay (Wisielec / Zgadywanka):
+          </label>
+          <div style="display: flex; gap: 0.5rem;">
+            <input type="text" id="obs-url-hangman" class="input-field" readonly>
+            <button class="btn btn-primary" onclick="copyOBSUrl('hangman')">Kopiuj</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: rgba(0, 0, 0, 0.3); padding: 0.85rem 1rem; border-radius: var(--radius-md); font-size: 0.825rem; color: var(--text-secondary); border-left: 3px solid var(--accent-cyan);">
+        💡 <strong>Wskazówka OBS:</strong> Ustaw w źródle przeglądarki szerokość: <strong>1920</strong>, wysokość: <strong>1080</strong>, a sterowanie prowadź w tym oknie na drugim monitorze!
       </div>
     </div>
   </div>
