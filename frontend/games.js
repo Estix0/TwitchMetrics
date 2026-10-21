@@ -2,13 +2,17 @@
 // Sraken pierdaken jak to nie będzie działać to przeprowadzam się do lasu :>
 // https://www.youtube.com/watch?v=NjOEdJ78eYM :oh:
 
+const urlParams = new URLSearchParams(window.location.search);
+const overlayParam = (urlParams.get('overlay') || '').toLowerCase();
+const isOverlayMode = overlayParam === '1' || overlayParam === 'true' || overlayParam === 'yes' || urlParams.has('overlay');
+
 const state = {
   activeGame: 'quiz', // 'quiz' | 'giveaway' | 'hangman' | 'leaderboard'
   lastPlayableGame: 'quiz',
-  isOverlay: new URLSearchParams(window.location.search).get('overlay') === '1',
-  targetGame: new URLSearchParams(window.location.search).get('game') || 'auto',
+  isOverlay: isOverlayMode,
+  targetGame: urlParams.get('game') || 'auto',
   channel: 'Streamer',
-  authPassword: localStorage.getItem('tm_auth_pwd') || new URLSearchParams(window.location.search).get('password') || '',
+  authPassword: localStorage.getItem('tm_auth_pwd') || urlParams.get('password') || '',
   latestMsgId: 0,
   pollTimer: null,
   activeChatters: [],
@@ -48,6 +52,7 @@ const state = {
     word: 'WIEDŹMIN DZIKI GON',
     category: 'Gry Komputerowe',
     hint: 'Kultowy RPG od CD Projekt Red',
+    wordList: [], // Saved words: [{ word, category, hint }]
     revealedLetters: new Set(),
     wrongLetters: new Set(),
     livesLeft: 6,
@@ -137,7 +142,7 @@ function launchConfetti(durationMs = 1500) {
 
 // OBS Studio Synchronization Engine
 // Synchronizacja stanu przez HTTP POST/GET do FastAPI z throttlingiem (~200ms).
-function serializeGameState() {
+function serializeGameState(forceEmpty = false) {
   // Set w JS serializuje sie do {}, Array.from() ratuje uczestnikow losowania
   const counts = { A: 0, B: 0, C: 0, D: 0 };
   state.quiz.answers.forEach((val) => {
@@ -149,6 +154,7 @@ function serializeGameState() {
 
   return {
     active_game: exportedGame,
+    force_empty: forceEmpty,
     quiz: {
       question: q ? q.question : '',
       category: q ? (q.category || 'Ogólne') : 'Ogólne',
@@ -191,21 +197,28 @@ function serializeGameState() {
 
 let syncDebounceTimer = null;
 let lastSyncSendTime = 0;
-async function pushStateToServer(immediate = false) {
+let isPushingState = false;
+
+async function pushStateToServer(immediate = false, forceEmpty = false) {
   if (state.isOverlay) return; // Only host pushes state
 
-  const payload = serializeGameState();
+  const payload = serializeGameState(forceEmpty);
   broadcastSync('STATE_SYNC', payload);
 
   const send = async () => {
+    if (isPushingState) return;
+    isPushingState = true;
     lastSyncSendTime = Date.now();
     try {
       await fetch(`${API_BASE}/games/state`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(serializeGameState())
+        body: JSON.stringify(serializeGameState(forceEmpty))
       });
-    } catch (e) {}
+    } catch (e) {
+    } finally {
+      isPushingState = false;
+    }
   };
 
   if (immediate) {
@@ -228,23 +241,31 @@ async function pushStateToServer(immediate = false) {
 }
 
 let lastOverlayVersion = -1;
+let isPollingOverlay = false;
+
 function startOverlaySync() {
   async function pollOverlayState() {
+    if (isPollingOverlay) return;
+    isPollingOverlay = true;
+
     try {
       const res = await fetch(`${API_BASE}/games/state?t=${Date.now()}`);
       if (res.ok) {
         const data = await res.json();
         const ver = data.version || 0;
-        if (ver !== lastOverlayVersion) {
+        if (ver > lastOverlayVersion || (lastOverlayVersion - ver > 50 && ver > 0)) {
           lastOverlayVersion = ver;
           applyServerState(data);
         }
       }
-    } catch (e) {}
+    } catch (e) {
+    } finally {
+      isPollingOverlay = false;
+    }
   }
 
   pollOverlayState();
-  setInterval(pollOverlayState, 200);
+  setInterval(pollOverlayState, 250);
 }
 
 function applyServerState(data) {
@@ -272,6 +293,10 @@ function applyServerState(data) {
         options: sq.options || [],
         correctAnswer: sq.correct_answer || 'A'
       };
+    } else if (state.isOverlay && state.quiz.currentQuestion && state.quiz.currentQuestion.question) {
+      if (sq.state === 'idle' && (!sq.options || sq.options.length === 0)) {
+        state.quiz.currentQuestion = null;
+      }
     } else {
       state.quiz.currentQuestion = null;
     }
@@ -376,7 +401,17 @@ window.addEventListener('DOMContentLoaded', async () => {
       renderQuizEmptyState();
     }
 
-    setupHangmanWord('WIEDŹMIN DZIKI GON', 'Gry Komputerowe', 'Kultowy RPG od CD Projekt Red');
+    loadSavedHangman();
+    setupHangmanWord(state.hangman.word, state.hangman.category, state.hangman.hint, false);
+
+    ['input-custom-word', 'input-custom-cat', 'input-custom-hint'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('keyup', (e) => {
+          if (e.key === 'Enter') applyCustomWord();
+        });
+      }
+    });
     startChatPolling();
     pushStateToServer(true);
   }
@@ -546,26 +581,29 @@ function loadQuizQuestion(index) {
 
 function renderQuizEmptyState() {
   const indicator = document.getElementById('quiz-index-indicator');
-  if (indicator) indicator.innerText = '0 / 0';
+  if (indicator && indicator.innerText !== '0 / 0') indicator.innerText = '0 / 0';
   const votes = document.getElementById('quiz-votes-counter');
-  if (votes) votes.innerText = '0';
+  if (votes && votes.innerText !== '0') votes.innerText = '0';
 
   const qDisplay = document.getElementById('quiz-question-display');
   if (qDisplay) {
     if (state.isOverlay) {
-      qDisplay.innerHTML = '<div style="padding: 1.5rem 0; color: var(--text-secondary);"><strong>Czekamy na pytanie streamerki...</strong></div>';
+      const emptyHtml = '<div style="padding: 1.5rem 0; color: var(--text-secondary);"><strong>Czekamy na pytanie streamerki...</strong></div>';
+      if (qDisplay.innerHTML !== emptyHtml) qDisplay.innerHTML = emptyHtml;
     } else {
-      qDisplay.innerText = 'Brak załadowanych pytań. Kliknij poniżej "Importuj Pytania", aby dodać swój quiz.';
+      const emptyText = 'Brak załadowanych pytań. Kliknij poniżej "Importuj Pytania", aby dodać swój quiz.';
+      if (qDisplay.innerText !== emptyText) qDisplay.innerText = emptyText;
     }
   }
 
   ['A', 'B', 'C', 'D'].forEach(k => {
     const textEl = document.getElementById(`opt-text-${k}`);
-    if (textEl) textEl.innerText = state.isOverlay ? '...' : '-';
+    const expected = state.isOverlay ? '...' : '-';
+    if (textEl && textEl.innerText !== expected) textEl.innerText = expected;
     const progEl = document.getElementById(`opt-prog-${k}`);
-    if (progEl) progEl.style.width = '0%';
+    if (progEl && progEl.style.width !== '0%') progEl.style.width = '0%';
     const countEl = document.getElementById(`opt-count-${k}`);
-    if (countEl) countEl.innerText = '0 odp.';
+    if (countEl && countEl.innerText !== '0 odp.') countEl.innerText = '0 odp.';
   });
 
   const btnStart = document.getElementById('btn-quiz-start');
@@ -715,24 +753,31 @@ function renderQuizUI() {
   const currentNum = state.quiz.currentIndex + 1;
   if (catDisplay) {
     const indexPart = state.isOverlay ? '' : ` <span id="quiz-index-indicator">${currentNum} / ${total}</span>`;
-    catDisplay.innerHTML = `${q.category || 'Pytanie'}${indexPart}`;
+    const catHtml = `${q.category || 'Pytanie'}${indexPart}`;
+    if (catDisplay.innerHTML !== catHtml) catDisplay.innerHTML = catHtml;
   }
 
   const qText = document.getElementById('quiz-question-display');
-  if (qText) qText.innerText = q.question;
+  if (qText && qText.innerText !== q.question) {
+    qText.innerText = q.question;
+  }
 
   // Options A, B, C, D text
   if (q.options) {
     q.options.forEach(opt => {
       const textEl = document.getElementById(`opt-text-${opt.key}`);
-      if (textEl) textEl.innerText = opt.text;
+      if (textEl && textEl.innerText !== opt.text) {
+        textEl.innerText = opt.text;
+      }
     });
   }
 
   // Total Votes badge
   const votesCount = state.isOverlay ? (state.quiz.remoteAnswersCount || 0) : state.quiz.answers.size;
   const counter = document.getElementById('quiz-votes-counter');
-  if (counter) counter.innerText = votesCount;
+  if (counter && counter.innerText != votesCount) {
+    counter.innerText = votesCount;
+  }
 
   const optionsGrid = document.getElementById('quiz-options-container');
   const podiumCard = document.getElementById('quiz-round-podium');
@@ -755,34 +800,42 @@ function renderQuizUI() {
       const progEl = document.getElementById(`opt-prog-${key}`);
       const c = dist[key] || 0;
       const pct = totalVotes > 0 ? Math.round((c / totalVotes) * 100) : 0;
-      if (countEl) countEl.innerText = `${c} odp. (${pct}%)`;
-      if (progEl) progEl.style.width = `${pct}%`;
+      const countStr = `${c} odp. (${pct}%)`;
+      const pctStr = `${pct}%`;
+      if (countEl && countEl.innerText !== countStr) countEl.innerText = countStr;
+      if (progEl && progEl.style.width !== pctStr) progEl.style.width = pctStr;
     });
   };
 
   // Handle ACTIVE vs REVEALED vs IDLE visual states
   if (state.quiz.state === 'active') {
-    if (optionsGrid) {
+    if (optionsGrid && !optionsGrid.classList.contains('voting-active')) {
       optionsGrid.classList.add('voting-active');
       document.querySelectorAll('.option-card').forEach(c => c.classList.remove('correct', 'wrong'));
     }
-    if (podiumCard) podiumCard.style.display = 'none';
+    if (podiumCard && podiumCard.style.display !== 'none') podiumCard.style.display = 'none';
 
     // Show live voting stats in real time on both Host and Overlay!
     updateOptionBars();
 
   } else if (state.quiz.state === 'revealed' || state.quiz.revealed) {
-    if (optionsGrid) optionsGrid.classList.remove('voting-active');
+    if (optionsGrid && optionsGrid.classList.contains('voting-active')) {
+      optionsGrid.classList.remove('voting-active');
+    }
 
     const correctKey = q.correctAnswer || q.correct || 'A';
     document.querySelectorAll('.option-card').forEach(card => {
       const k = card.getAttribute('data-key');
       if (k === correctKey) {
-        card.classList.add('correct');
-        card.classList.remove('wrong');
+        if (!card.classList.contains('correct')) {
+          card.classList.add('correct');
+          card.classList.remove('wrong');
+        }
       } else {
-        card.classList.add('wrong');
-        card.classList.remove('correct');
+        if (!card.classList.contains('wrong')) {
+          card.classList.add('wrong');
+          card.classList.remove('correct');
+        }
       }
     });
 
@@ -791,37 +844,42 @@ function renderQuizUI() {
     // Podium display
     const podiumItems = state.isOverlay ? (state.quiz.remotePodium || []) : state.quiz.podium;
     if (podiumCard) {
-      podiumCard.style.display = 'block';
+      if (podiumCard.style.display !== 'block') podiumCard.style.display = 'block';
       const podiumLetter = document.getElementById('podium-correct-letter');
       const podiumSub = document.getElementById('podium-stats-sub');
       const podiumList = document.getElementById('podium-list');
 
-      if (podiumLetter) podiumLetter.innerText = correctKey;
-      if (podiumSub) podiumSub.innerText = `${podiumItems ? podiumItems.length : 0} poprawnych odpowiedzi (na ${votesCount} głosujących)`;
+      if (podiumLetter && podiumLetter.innerText !== correctKey) podiumLetter.innerText = correctKey;
+      const subText = `${podiumItems ? podiumItems.length : 0} poprawnych odpowiedzi (na ${votesCount} głosujących)`;
+      if (podiumSub && podiumSub.innerText !== subText) podiumSub.innerText = subText;
       if (podiumList && podiumItems) {
-        podiumList.innerHTML = podiumItems.slice(0, 5).map((c, i) => `
-          <div style="background: var(--twitch-base); padding: 0.35rem 0.75rem; border-radius: var(--radius-xs); border: 1px solid rgba(0,173,3,0.3); font-size: 0.825rem; display: flex; align-items: center; gap: 0.4rem;">
-            <span style="font-weight: 700; color: var(--accent-amber);">#${i + 1}</span>
-            <strong>@${c.username || c.user}</strong>
-            <span style="color: var(--accent-emerald); font-weight: 700;">+${c.points || 100} pkt</span>
-          </div>
-        `).join('') || '<div style="color: var(--text-muted); font-size: 0.85rem;">Nikt nie odpowiedział poprawnie w tej rundzie!</div>';
+        const podKey = podiumItems.map(c => `${c.username || c.user}:${c.points}`).join('|');
+        if (podiumList._lastPodKey !== podKey) {
+          podiumList._lastPodKey = podKey;
+          podiumList.innerHTML = podiumItems.slice(0, 5).map((c, i) => `
+            <div style="background: var(--twitch-base); padding: 0.35rem 0.75rem; border-radius: var(--radius-xs); border: 1px solid rgba(0,173,3,0.3); font-size: 0.825rem; display: flex; align-items: center; gap: 0.4rem;">
+              <span style="font-weight: 700; color: var(--accent-amber);">#${i + 1}</span>
+              <strong>@${c.username || c.user}</strong>
+              <span style="color: var(--accent-emerald); font-weight: 700;">+${c.points || 100} pkt</span>
+            </div>
+          `).join('') || '<div style="color: var(--text-muted); font-size: 0.85rem;">Nikt nie odpowiedział poprawnie w tej rundzie!</div>';
+        }
       }
     }
   } else {
     // Idle state
-    if (optionsGrid) {
+    if (optionsGrid && optionsGrid.classList.contains('voting-active')) {
       optionsGrid.classList.remove('voting-active');
       document.querySelectorAll('.option-card').forEach(c => {
         c.classList.remove('correct', 'wrong');
         const k = c.getAttribute('data-key');
         const prog = document.getElementById(`opt-prog-${k}`);
         const cnt = document.getElementById(`opt-count-${k}`);
-        if (prog) prog.style.width = '0%';
-        if (cnt) cnt.innerText = '0 odp.';
+        if (prog && prog.style.width !== '0%') prog.style.width = '0%';
+        if (cnt && cnt.innerText !== '0 odp.') cnt.innerText = '0 odp.';
       });
     }
-    if (podiumCard) podiumCard.style.display = 'none';
+    if (podiumCard && podiumCard.style.display !== 'none') podiumCard.style.display = 'none';
   }
 
   const btnStart = document.getElementById('btn-quiz-start');
@@ -837,11 +895,15 @@ function updateQuizTimerUI() {
   const fill = document.getElementById('quiz-timer-fill');
   const badge = document.getElementById('quiz-timer-badge');
 
-  if (sec) sec.innerText = state.quiz.timerVal;
+  if (sec && sec.innerText != state.quiz.timerVal) {
+    sec.innerText = state.quiz.timerVal;
+  }
   if (fill && state.quiz.timerMax > 0) {
     const pct = Math.max(0, (state.quiz.timerVal / state.quiz.timerMax) * 100);
-    fill.style.width = `${pct}%`;
-    fill.style.background = pct < 25 ? 'var(--accent-red)' : (pct < 50 ? 'var(--accent-amber)' : 'linear-gradient(90deg, var(--twitch-purple), var(--accent-cyan))');
+    const pctStr = `${pct}%`;
+    if (fill.style.width !== pctStr) fill.style.width = pctStr;
+    const bg = pct < 25 ? 'var(--accent-red)' : (pct < 50 ? 'var(--accent-amber)' : 'linear-gradient(90deg, var(--twitch-purple), var(--accent-cyan))');
+    if (fill.style.background !== bg) fill.style.background = bg;
   }
 
   if (badge) {
@@ -1003,10 +1065,13 @@ function deleteQuizQuestion(index) {
 function clearAllQuestions() {
   if (confirm("Czy na pewno chcesz usunąć wszystkie załadowane pytania?")) {
     state.quiz.questionList = [];
+    state.quiz.currentIndex = 0;
+    state.quiz.currentQuestion = null;
     saveQuestions();
     renderQuizEmptyState();
     closeModal('modal-question-manager');
     showToast("Wyczyszczono bazę pytań.", "info");
+    pushStateToServer(true, true);
   }
 }
 
@@ -1498,14 +1563,16 @@ function clearGiveawayParticipants() {
 }
 
 // Hangman Engine
-function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '') {
-  state.hangman.word = word.toUpperCase().trim();
-  state.hangman.category = category;
-  state.hangman.hint = hint;
+function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '', notify = true) {
+  state.hangman.word = (word || 'WIEDŹMIN DZIKI GON').toUpperCase().trim();
+  state.hangman.category = category || 'Gry Komputerowe';
+  state.hangman.hint = hint || '';
   state.hangman.revealedLetters.clear();
   state.hangman.wrongLetters.clear();
   state.hangman.livesLeft = state.hangman.maxLives;
   state.hangman.state = 'playing';
+
+  saveHangmanCurrent(state.hangman.word, state.hangman.category, state.hangman.hint);
 
   for (const ch of state.hangman.word) {
     if (!ch.match(/[A-ZĄĆĘŁŃÓŚŹŻ]/i)) {
@@ -1515,7 +1582,9 @@ function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '') {
 
   renderHangmanUI();
   pushStateToServer(true);
-  showToast(`Rozpoczęto hasło: ${category}`, 'info');
+  if (notify) {
+    showToast(`Rozpoczęto hasło: ${state.hangman.category}`, 'info');
+  }
 
   if (state.hangman.turnMode === 'chatter' && !state.isOverlay) {
     rollActiveChatter();
@@ -1525,55 +1594,64 @@ function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '') {
 function renderHangmanUI() {
   const catDisplay = document.getElementById('hangman-category-display');
   const hintDisplay = document.getElementById('hangman-hint-display');
-  if (catDisplay) catDisplay.innerText = state.hangman.category;
-  if (hintDisplay) hintDisplay.innerText = state.hangman.hint ? `Podpowiedź: ${state.hangman.hint}` : '';
+  if (catDisplay && catDisplay.innerText !== state.hangman.category) {
+    catDisplay.innerText = state.hangman.category;
+  }
+  const hintText = state.hangman.hint ? `Podpowiedź: ${state.hangman.hint}` : '';
+  if (hintDisplay && hintDisplay.innerText !== hintText) {
+    hintDisplay.innerText = hintText;
+  }
 
   for (let i = 1; i <= state.hangman.maxLives; i++) {
     const heart = document.getElementById(`heart-${i}`);
     if (heart) {
-      if (i <= state.hangman.livesLeft) {
-        heart.className = 'life-pip active';
-        heart.innerText = '';
-      } else {
-        heart.className = 'life-pip lost';
-        heart.innerText = '';
-      }
+      const targetClass = i <= state.hangman.livesLeft ? 'life-pip active' : 'life-pip lost';
+      if (heart.className !== targetClass) heart.className = targetClass;
     }
   }
 
   const livesNum = document.getElementById('hangman-lives-num');
-  if (livesNum) livesNum.innerText = `${state.hangman.livesLeft}/${state.hangman.maxLives}`;
+  const livesStr = `${state.hangman.livesLeft}/${state.hangman.maxLives}`;
+  if (livesNum && livesNum.innerText !== livesStr) livesNum.innerText = livesStr;
 
   const board = document.getElementById('hangman-board');
   if (board) {
-    board.innerHTML = '';
-    const words = state.hangman.word.split(' ');
+    const currentWordKey = `${state.hangman.word}__${Array.from(state.hangman.revealedLetters).sort().join('')}`;
+    if (board._lastRenderedKey !== currentWordKey) {
+      board._lastRenderedKey = currentWordKey;
+      board.innerHTML = '';
+      const words = state.hangman.word.split(' ');
 
-    words.forEach((w) => {
-      const segment = document.createElement('div');
-      segment.className = 'word-segment';
+      words.forEach((w) => {
+        const segment = document.createElement('div');
+        segment.className = 'word-segment';
 
-      for (let i = 0; i < w.length; i++) {
-        const char = w[i];
-        const isRevealed = state.hangman.revealedLetters.has(char);
-        const tile = document.createElement('div');
-        tile.className = `letter-tile ${isRevealed ? 'revealed' : ''}`;
-        tile.innerText = isRevealed ? char : '';
-        segment.appendChild(tile);
-      }
+        for (let i = 0; i < w.length; i++) {
+          const char = w[i];
+          const isRevealed = state.hangman.revealedLetters.has(char);
+          const tile = document.createElement('div');
+          tile.className = `letter-tile ${isRevealed ? 'revealed' : ''}`;
+          tile.innerText = isRevealed ? char : '';
+          segment.appendChild(tile);
+        }
 
-      board.appendChild(segment);
-    });
+        board.appendChild(segment);
+      });
+    }
   }
 
   const wrongContainer = document.getElementById('wrong-letters-chips');
   if (wrongContainer) {
-    if (state.hangman.wrongLetters.size === 0) {
-      wrongContainer.innerHTML = '<span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">Brak</span>';
-    } else {
-      wrongContainer.innerHTML = Array.from(state.hangman.wrongLetters).map(ch => `
-        <span class="wrong-letter-chip">${ch}</span>
-      `).join('');
+    const wrongKey = Array.from(state.hangman.wrongLetters).sort().join(',');
+    if (wrongContainer._lastRenderedKey !== wrongKey) {
+      wrongContainer._lastRenderedKey = wrongKey;
+      if (state.hangman.wrongLetters.size === 0) {
+        wrongContainer.innerHTML = '<span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">Brak</span>';
+      } else {
+        wrongContainer.innerHTML = Array.from(state.hangman.wrongLetters).map(ch => `
+          <span class="wrong-letter-chip">${ch}</span>
+        `).join('');
+      }
     }
   }
 
@@ -1823,7 +1901,19 @@ function revealHangmanWord() {
 }
 
 function openCustomWordModal() {
+  const wordInput = document.getElementById('input-custom-word');
+  const catInput = document.getElementById('input-custom-cat');
+  const hintInput = document.getElementById('input-custom-hint');
+
+  if (wordInput) wordInput.value = state.hangman.word || '';
+  if (catInput) catInput.value = state.hangman.category || '';
+  if (hintInput) hintInput.value = state.hangman.hint || '';
+
+  updateHangmanManagerUI();
   document.getElementById('modal-custom-word').classList.add('active');
+  setTimeout(() => {
+    if (wordInput) wordInput.focus();
+  }, 50);
 }
 
 function applyCustomWord() {
@@ -1837,7 +1927,143 @@ function applyCustomWord() {
   }
 
   closeModal('modal-custom-word');
-  setupHangmanWord(word, cat, hint);
+  setupHangmanWord(word, cat, hint, true);
+}
+
+function loadSavedHangman() {
+  const savedList = localStorage.getItem('tm_hangman_words');
+  if (savedList) {
+    try {
+      state.hangman.wordList = JSON.parse(savedList);
+    } catch (e) {
+      state.hangman.wordList = [];
+    }
+  } else {
+    state.hangman.wordList = [
+      { word: 'WIEDŹMIN DZIKI GON', category: 'Gry Komputerowe', hint: 'Kultowy RPG od CD Projekt Red' }
+    ];
+  }
+
+  const savedCurrent = localStorage.getItem('tm_hangman_current');
+  if (savedCurrent) {
+    try {
+      const cur = JSON.parse(savedCurrent);
+      if (cur && cur.word) {
+        state.hangman.word = cur.word.toUpperCase().trim();
+        state.hangman.category = cur.category || 'Gry Komputerowe';
+        state.hangman.hint = cur.hint || '';
+      }
+    } catch (e) {}
+  } else if (state.hangman.wordList.length > 0) {
+    state.hangman.word = state.hangman.wordList[0].word.toUpperCase().trim();
+    state.hangman.category = state.hangman.wordList[0].category || 'Gry Komputerowe';
+    state.hangman.hint = state.hangman.wordList[0].hint || '';
+  }
+
+  updateHangmanManagerUI();
+}
+
+function saveHangmanCurrent(word, category, hint) {
+  const normWord = (word || '').toUpperCase().trim();
+  const cat = (category || 'Gry Komputerowe').trim();
+  const h = (hint || '').trim();
+
+  localStorage.setItem('tm_hangman_current', JSON.stringify({ word: normWord, category: cat, hint: h }));
+
+  if (normWord.length >= 2) {
+    if (!Array.isArray(state.hangman.wordList)) state.hangman.wordList = [];
+    const existingIdx = state.hangman.wordList.findIndex(item => item.word.toUpperCase().trim() === normWord);
+    if (existingIdx >= 0) {
+      state.hangman.wordList[existingIdx] = { word: normWord, category: cat, hint: h };
+    } else {
+      state.hangman.wordList.unshift({ word: normWord, category: cat, hint: h });
+    }
+    saveHangmanWordsList();
+  }
+}
+
+function saveHangmanWordsList() {
+  localStorage.setItem('tm_hangman_words', JSON.stringify(state.hangman.wordList));
+  updateHangmanManagerUI();
+}
+
+function updateHangmanManagerUI() {
+  const btnCount = document.getElementById('btn-count-loaded-words');
+  if (btnCount) {
+    btnCount.innerText = `Baza Haseł (${state.hangman.wordList.length})`;
+  }
+  const modalCount = document.getElementById('hangman-saved-count');
+  if (modalCount) {
+    modalCount.innerText = state.hangman.wordList.length;
+  }
+  renderSavedHangmanWords();
+}
+
+function renderSavedHangmanWords() {
+  const container = document.getElementById('hangman-saved-list');
+  if (!container) return;
+
+  if (!state.hangman.wordList || state.hangman.wordList.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.8rem;">Brak zapisanych haseł w bazie. Wpisz hasło powyżej i kliknij Rozpocznij Hasło.</div>';
+    return;
+  }
+
+  container.innerHTML = state.hangman.wordList.map((item, idx) => {
+    const isCurrent = (item.word.toUpperCase().trim() === (state.hangman.word || '').toUpperCase().trim());
+    return `
+      <div class="qm-item ${isCurrent ? 'active' : ''}" style="display: flex; justify-content: space-between; align-items: center; padding: 0.45rem 0.65rem; border-radius: var(--radius-sm);">
+        <div style="flex: 1; min-width: 0; cursor: pointer;" onclick="selectSavedHangmanWord(${idx})">
+          <div style="font-weight: 700; font-size: 0.875rem; color: #fff; font-family: 'Fredoka', 'Montserrat', sans-serif;">
+            ${escapeHtml(item.word)}
+          </div>
+          <div style="font-size: 0.725rem; color: var(--text-secondary); display: flex; gap: 0.4rem; align-items: center; margin-top: 0.15rem;">
+            <span class="category-tag" style="font-size: 0.65rem; padding: 0.1rem 0.4rem;">${escapeHtml(item.category || 'Hasło')}</span>
+            ${item.hint ? `<span style="color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(item.hint)}</span>` : ''}
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.35rem; align-items: center;">
+          <button class="btn btn-secondary btn-icon" onclick="selectSavedHangmanWord(${idx})" title="Wczytaj to hasło" style="font-size: 0.75rem; padding: 0.25rem 0.55rem;">
+            Wybierz
+          </button>
+          <button class="btn btn-danger btn-icon" onclick="deleteSavedHangmanWord(${idx}, event)" title="Usuń z bazy" style="font-size: 0.75rem; padding: 0.25rem 0.45rem;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectSavedHangmanWord(idx) {
+  const item = state.hangman.wordList[idx];
+  if (!item) return;
+
+  const wordInput = document.getElementById('input-custom-word');
+  const catInput = document.getElementById('input-custom-cat');
+  const hintInput = document.getElementById('input-custom-hint');
+
+  if (wordInput) wordInput.value = item.word;
+  if (catInput) catInput.value = item.category || '';
+  if (hintInput) hintInput.value = item.hint || '';
+
+  showToast(`Wybrano hasło: ${item.word}`, 'info');
+}
+
+function deleteSavedHangmanWord(idx, ev) {
+  if (ev) ev.stopPropagation();
+  if (idx >= 0 && idx < state.hangman.wordList.length) {
+    const removed = state.hangman.wordList.splice(idx, 1);
+    saveHangmanWordsList();
+    showToast(`Usunięto hasło "${removed[0].word}" z bazy.`, 'info');
+  }
+}
+
+function clearAllHangmanWords() {
+  if (confirm('Czy na pewno chcesz usunąć wszystkie zapisane hasła do Wisielca?')) {
+    state.hangman.wordList = [];
+    saveHangmanWordsList();
+    showToast('Wyczyszczono bazę haseł Wisielca.', 'info');
+  }
 }
 
 // Leaderboard & CSV Export
