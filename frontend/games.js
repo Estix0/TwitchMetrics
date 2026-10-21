@@ -691,6 +691,12 @@ function loadQuizQuestion(index) {
 }
 
 function renderQuizEmptyState() {
+  const catDisplay = document.getElementById('quiz-category-display');
+  if (catDisplay) {
+    if (state.isOverlay) catDisplay.style.display = 'none';
+    else catDisplay.style.display = '';
+  }
+
   const indicator = document.getElementById('quiz-index-indicator');
   if (indicator && indicator.innerText !== '0 / 0') indicator.innerText = '0 / 0';
   const votes = document.getElementById('quiz-votes-counter');
@@ -714,7 +720,13 @@ function renderQuizEmptyState() {
     const progEl = document.getElementById(`opt-prog-${k}`);
     if (progEl && progEl.style.width !== '0%') progEl.style.width = '0%';
     const countEl = document.getElementById(`opt-count-${k}`);
-    if (countEl && countEl.innerText !== '0 odp.') countEl.innerText = '0 odp.';
+    if (countEl) {
+      if (state.isOverlay) countEl.style.display = 'none';
+      else {
+        countEl.style.display = '';
+        if (countEl.innerText !== '0 odp.') countEl.innerText = '0 odp.';
+      }
+    }
   });
 
   const btnStart = document.getElementById('btn-quiz-start');
@@ -863,9 +875,14 @@ function renderQuizUI() {
   const total = (state.quiz.questionList && state.quiz.questionList.length) ? state.quiz.questionList.length : 1;
   const currentNum = state.quiz.currentIndex + 1;
   if (catDisplay) {
-    const indexPart = state.isOverlay ? '' : ` <span id="quiz-index-indicator">${currentNum} / ${total}</span>`;
-    const catHtml = `${q.category || 'Pytanie'}${indexPart}`;
-    if (catDisplay.innerHTML !== catHtml) catDisplay.innerHTML = catHtml;
+    if (state.isOverlay) {
+      catDisplay.style.display = 'none';
+    } else {
+      catDisplay.style.display = '';
+      const indexPart = ` <span id="quiz-index-indicator">${currentNum} / ${total}</span>`;
+      const catHtml = `${q.category || 'Pytanie'}${indexPart}`;
+      if (catDisplay.innerHTML !== catHtml) catDisplay.innerHTML = catHtml;
+    }
   }
 
   const qText = document.getElementById('quiz-question-display');
@@ -904,17 +921,28 @@ function renderQuizUI() {
 
   const totalVotes = Object.values(dist).reduce((a, b) => a + b, 0);
 
-  // Helper to update progress and counts on options
-  const updateOptionBars = () => {
+  // Helper to update progress and counts on options (hidden during active question on overlay)
+  const updateOptionBars = (hideOnOverlay = false) => {
     ['A', 'B', 'C', 'D'].forEach(key => {
       const countEl = document.getElementById(`opt-count-${key}`);
       const progEl = document.getElementById(`opt-prog-${key}`);
       const c = dist[key] || 0;
       const pct = totalVotes > 0 ? Math.round((c / totalVotes) * 100) : 0;
-      const countStr = `${c} odp. (${pct}%)`;
-      const pctStr = `${pct}%`;
-      if (countEl && countEl.innerText !== countStr) countEl.innerText = countStr;
-      if (progEl && progEl.style.width !== pctStr) progEl.style.width = pctStr;
+      
+      if (state.isOverlay && hideOnOverlay) {
+        if (countEl) countEl.style.display = 'none';
+        if (progEl && progEl.style.width !== '0%') progEl.style.width = '0%';
+      } else {
+        if (countEl) {
+          countEl.style.display = '';
+          const countStr = `${c} odp. (${pct}%)`;
+          if (countEl.innerText !== countStr) countEl.innerText = countStr;
+        }
+        if (progEl) {
+          const pctStr = `${pct}%`;
+          if (progEl.style.width !== pctStr) progEl.style.width = pctStr;
+        }
+      }
     });
   };
 
@@ -926,8 +954,8 @@ function renderQuizUI() {
     }
     if (podiumCard && podiumCard.style.display !== 'none') podiumCard.style.display = 'none';
 
-    // Show live voting stats in real time on both Host and Overlay!
-    updateOptionBars();
+    // During active question on Overlay: do NOT show option counts and percentages!
+    updateOptionBars(state.isOverlay);
 
   } else if (state.quiz.state === 'revealed' || state.quiz.revealed) {
     if (optionsGrid && optionsGrid.classList.contains('voting-active')) {
@@ -950,7 +978,8 @@ function renderQuizUI() {
       }
     });
 
-    updateOptionBars();
+    // Reveal question results with percentages and counts
+    updateOptionBars(false);
 
     // Podium display
     const podiumItems = state.isOverlay ? (state.quiz.remotePodium || []) : state.quiz.podium;
@@ -1299,8 +1328,12 @@ function updateGiveawayUI() {
     }
     const csprngBadge = document.getElementById('giveaway-winner-csprng');
     if (csprngBadge) {
-      csprngBadge.style.display = 'inline-block';
-      csprngBadge.innerText = state.giveaway.lastRollHash ? `Losowanie CSPRNG #${state.giveaway.lastRollHash}` : 'Losowanie CSPRNG';
+      if (state.isOverlay) {
+        csprngBadge.style.display = 'none';
+      } else {
+        csprngBadge.style.display = 'inline-block';
+        csprngBadge.innerText = state.giveaway.lastRollHash ? `Losowanie CSPRNG #${state.giveaway.lastRollHash}` : 'Losowanie CSPRNG';
+      }
     }
     if (spinnerBox) spinnerBox.classList.remove('rolling');
     if (spinnerText) spinnerText.style.display = 'none';

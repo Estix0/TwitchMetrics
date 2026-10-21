@@ -1085,16 +1085,30 @@ body.overlay-mode .quiz-stage-card,
 body.overlay-mode .hangman-stage-card,
 body.overlay-mode .giveaway-stage-card {
   background: rgba(14, 14, 16, 0.94) !important;
-  border: 2px solid var(--twitch-purple) !important;
+  border: none !important;
   border-radius: 16px !important;
   padding: 1.75rem 2rem !important;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.85), 0 0 1px rgba(145, 70, 255, 0.5) !important;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.85) !important;
 }
 
 /* Never show session leaderboard on stream overlay */
 body.overlay-mode #view-leaderboard,
 body.overlay-mode #tab-btn-leaderboard {
   display: none !important;
+}
+
+/* Hide category badge ("OGÓLNE") on Quiz Overlay */
+body.overlay-mode #quiz-category-display {
+  display: none !important;
+}
+
+/* Hide option vote counts & percentages during active question on Overlay */
+body.overlay-mode .quiz-options-grid.voting-active .option-votes-badge {
+  display: none !important;
+}
+body.overlay-mode .quiz-options-grid.voting-active .option-progress-bg {
+  width: 0% !important;
+  opacity: 0 !important;
 }
 
 /* Quiz Overlay Styles */
@@ -1239,7 +1253,7 @@ body.overlay-mode .wrong-letters-box {
 /* Giveaway Overlay Styles */
 body.overlay-mode .giveaway-spinner-box {
   background: var(--twitch-base) !important;
-  border: 2px solid var(--twitch-purple) !important;
+  border: 1px solid var(--twitch-border) !important;
   border-radius: 12px !important;
   min-height: 220px !important;
   padding: 2rem 1.5rem !important;
@@ -1372,6 +1386,17 @@ body.overlay-mode #giveaway-participants-count {
   margin: 0 0.2rem !important;
 }
 
+body.overlay-mode .giveaway-winner-title,
+body.overlay-mode #giveaway-winner-title {
+  font-size: 1.65rem !important;
+  font-weight: 800 !important;
+  color: var(--accent-amber) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  text-shadow: 0 0 16px rgba(255, 176, 32, 0.4), 0 2px 4px rgba(0, 0, 0, 0.85) !important;
+  margin-bottom: 0.6rem !important;
+}
+
 body.overlay-mode #giveaway-winner-name {
   font-size: 3.2rem !important;
   color: var(--twitch-purple-light) !important;
@@ -1398,13 +1423,9 @@ body.overlay-mode #giveaway-winner-details {
   text-shadow: 0 0 10px rgba(0, 240, 255, 0.25);
 }
 
-body.overlay-mode .giveaway-csprng-badge {
-  font-size: 0.8rem !important;
-  color: #00d6c6 !important;
-  border-color: rgba(0, 214, 198, 0.4) !important;
-  background: rgba(0, 214, 198, 0.12) !important;
-  padding: 0.25rem 0.8rem !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+body.overlay-mode .giveaway-csprng-badge,
+body.overlay-mode #giveaway-winner-csprng {
+  display: none !important;
 }
 
 /* ==========================================================================
