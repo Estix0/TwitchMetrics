@@ -198,43 +198,57 @@ function serializeGameState(forceEmpty = false) {
 let syncDebounceTimer = null;
 let lastSyncSendTime = 0;
 let isPushingState = false;
+let hasPendingPush = false;
+let pendingForceEmpty = false;
+
+async function executeStatePush() {
+  if (isPushingState) {
+    hasPendingPush = true;
+    return;
+  }
+  isPushingState = true;
+  hasPendingPush = false;
+  const toForceEmpty = pendingForceEmpty;
+  pendingForceEmpty = false;
+  lastSyncSendTime = Date.now();
+  try {
+    await fetch(`${API_BASE}/games/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(serializeGameState(toForceEmpty))
+    });
+  } catch (e) {
+  } finally {
+    isPushingState = false;
+    if (hasPendingPush) {
+      hasPendingPush = false;
+      executeStatePush();
+    }
+  }
+}
 
 async function pushStateToServer(immediate = false, forceEmpty = false) {
   if (state.isOverlay) return; // Only host pushes state
 
-  const payload = serializeGameState(forceEmpty);
-  broadcastSync('STATE_SYNC', payload);
+  if (forceEmpty) pendingForceEmpty = true;
 
-  const send = async () => {
-    if (isPushingState) return;
-    isPushingState = true;
-    lastSyncSendTime = Date.now();
-    try {
-      await fetch(`${API_BASE}/games/state`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(serializeGameState(forceEmpty))
-      });
-    } catch (e) {
-    } finally {
-      isPushingState = false;
-    }
-  };
+  const payload = serializeGameState(pendingForceEmpty || forceEmpty);
+  broadcastSync('STATE_SYNC', payload);
 
   if (immediate) {
     if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
     syncDebounceTimer = null;
-    await send();
+    await executeStatePush();
   } else {
     const elapsed = Date.now() - lastSyncSendTime;
     if (elapsed > 200) {
       if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
       syncDebounceTimer = null;
-      await send();
+      await executeStatePush();
     } else if (!syncDebounceTimer) {
       syncDebounceTimer = setTimeout(() => {
         syncDebounceTimer = null;
-        send();
+        executeStatePush();
       }, Math.max(20, 200 - elapsed));
     }
   }
@@ -309,13 +323,14 @@ function applyServerState(data) {
     const incomingTimer = sq.timer_val !== undefined ? sq.timer_val : (sq.duration_seconds || 30);
     const incomingVotes = sq.answers_count || 0;
 
-    state.quiz.state = incomingState;
+    const isRevealed = !!sq.revealed || incomingState === 'revealed' || (incomingState === 'active' && incomingTimer <= 0);
+    state.quiz.state = isRevealed ? 'revealed' : (incomingState === 'idle' ? 'idle' : incomingState);
     state.quiz.timerMax = sq.duration_seconds || 30;
     state.quiz.remotePodium = sq.podium || [];
-    state.quiz.revealed = !!sq.revealed;
+    state.quiz.revealed = isRevealed;
 
     // MONOTONIC ANTI-JUMP PROTECTION FOR OBS OVERLAY:
-    if (state.isOverlay && incomingState === 'active' && prevState === 'active' && sameQuestion) {
+    if (state.isOverlay && incomingState === 'active' && prevState === 'active' && sameQuestion && !isRevealed) {
       // 1. Timer can only count down during an active round.
       if (incomingTimer < state.quiz.timerVal || incomingTimer >= (state.quiz.timerMax - 1)) {
         state.quiz.timerVal = incomingTimer;
@@ -442,6 +457,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             correctAnswer: sData.quiz.correct_answer || 'A'
           };
           state.quiz.state = sData.quiz.state || 'idle';
+          state.quiz.revealed = !!sData.quiz.revealed;
           state.quiz.timerVal = sData.quiz.timer_val !== undefined ? sData.quiz.timer_val : 30;
           state.quiz.timerMax = sData.quiz.duration_seconds || 30;
           renderQuizUI();
@@ -683,6 +699,11 @@ function loadQuizQuestion(index) {
   state.quiz.remoteDistribution = { A: 0, B: 0, C: 0, D: 0 };
   state.quiz.remoteAnswersCount = 0;
 
+  const timeSelect = document.getElementById('select-quiz-time');
+  const duration = parseInt(timeSelect ? timeSelect.value : '30', 10);
+  state.quiz.timerMax = duration;
+  state.quiz.timerVal = duration;
+
   const log = document.getElementById('quiz-live-log');
   if (log) log.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem;">Rozpocznij rundę, aby zbierać głosy z czatu.</div>';
 
@@ -778,10 +799,12 @@ function startQuizRound() {
       state.quiz.timerVal--;
       if (state.quiz.timerVal <= 5 && state.quiz.timerVal > 0) playTickSound();
       updateQuizTimerUI();
-      pushStateToServer(false);
       if (state.quiz.timerVal <= 0) {
         clearInterval(state.quiz.timerInterval);
+        state.quiz.timerInterval = null;
         revealQuizAnswer();
+      } else {
+        pushStateToServer(false);
       }
     }, 1000);
   }
@@ -832,8 +855,13 @@ function handleQuizMessage(username, text) {
 }
 
 function revealQuizAnswer() {
-  if (state.quiz.timerInterval) clearInterval(state.quiz.timerInterval);
+  if (state.quiz.timerInterval) {
+    clearInterval(state.quiz.timerInterval);
+    state.quiz.timerInterval = null;
+  }
   state.quiz.state = 'revealed';
+  state.quiz.revealed = true;
+  state.quiz.timerVal = 0;
 
   const q = state.quiz.currentQuestion;
   const correctKey = q ? (q.correctAnswer || q.correct || 'A') : 'A';
@@ -947,7 +975,9 @@ function renderQuizUI() {
   };
 
   // Handle ACTIVE vs REVEALED vs IDLE visual states
-  if (state.quiz.state === 'active') {
+  const isRevealed = state.quiz.state === 'revealed' || state.quiz.revealed || (state.quiz.state === 'active' && state.quiz.timerVal <= 0);
+
+  if (state.quiz.state === 'active' && state.quiz.timerVal > 0 && !isRevealed) {
     if (optionsGrid && !optionsGrid.classList.contains('voting-active')) {
       optionsGrid.classList.add('voting-active');
       document.querySelectorAll('.option-card').forEach(c => c.classList.remove('correct', 'wrong'));
@@ -957,7 +987,7 @@ function renderQuizUI() {
     // During active question on Overlay: do NOT show option counts and percentages!
     updateOptionBars(state.isOverlay);
 
-  } else if (state.quiz.state === 'revealed' || state.quiz.revealed) {
+  } else if (isRevealed) {
     if (optionsGrid && optionsGrid.classList.contains('voting-active')) {
       optionsGrid.classList.remove('voting-active');
     }
@@ -1042,8 +1072,19 @@ function updateQuizTimerUI() {
     const pct = Math.max(0, (state.quiz.timerVal / state.quiz.timerMax) * 100);
     const pctStr = `${pct}%`;
     if (fill.style.width !== pctStr) fill.style.width = pctStr;
-    const bg = pct < 25 ? 'var(--accent-red)' : (pct < 50 ? 'var(--accent-amber)' : 'linear-gradient(90deg, var(--twitch-purple), var(--accent-cyan))');
+
+    let bg = 'linear-gradient(90deg, #772ce8 0%, #9146ff 50%, #c084fc 100%)';
+    let shadow = '0 0 10px rgba(145, 70, 255, 0.45)';
+    if (pct < 25) {
+      bg = 'linear-gradient(90deg, #b91c1c 0%, #ef4444 100%)';
+      shadow = '0 0 10px rgba(239, 68, 68, 0.5)';
+    } else if (pct < 50) {
+      bg = 'linear-gradient(90deg, #d97706 0%, #f59e0b 100%)';
+      shadow = '0 0 10px rgba(245, 158, 11, 0.45)';
+    }
+
     if (fill.style.background !== bg) fill.style.background = bg;
+    if (fill.style.boxShadow !== shadow) fill.style.boxShadow = shadow;
   }
 
   if (badge) {

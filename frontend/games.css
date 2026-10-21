@@ -471,27 +471,49 @@ h1, h2, h3, h4, .brand-title, .letter-tile, .spinner-name, .option-key, .quiz-qu
 
 .quiz-timer-display {
   font-family: 'Fredoka', 'Montserrat', sans-serif;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--accent-amber);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--twitch-purple-light);
   background: var(--twitch-elevated);
   border: 1px solid var(--twitch-border);
   padding: 0.25rem 0.75rem;
   border-radius: var(--radius-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  transition: all var(--transition-fast);
+}
+
+.quiz-timer-display #quiz-timer-sec {
+  color: var(--twitch-purple-light);
+  font-weight: 700;
+}
+
+.quiz-timer-display.danger {
+  color: var(--accent-red) !important;
+  background: rgba(235, 4, 0, 0.15) !important;
+  border-color: rgba(235, 4, 0, 0.4) !important;
+}
+
+.quiz-timer-display.danger #quiz-timer-sec {
+  color: var(--accent-red) !important;
 }
 
 .timer-bar-track {
   width: 100%;
-  height: 6px;
-  background: var(--twitch-elevated);
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-pill);
   overflow: hidden;
+  margin: 0.65rem 0 1rem 0;
 }
 
 .timer-bar-fill {
   height: 100%;
-  background: var(--accent-amber);
+  background: linear-gradient(90deg, #772ce8 0%, #9146ff 50%, #c084fc 100%);
+  border-radius: var(--radius-pill);
   transition: width 0.25s linear;
+  box-shadow: 0 0 10px rgba(145, 70, 255, 0.45);
 }
 
 .quiz-question-text {
@@ -1133,7 +1155,22 @@ body.overlay-mode .category-tag {
 body.overlay-mode .quiz-timer-display {
   background: var(--twitch-base) !important;
   border: 1px solid var(--twitch-border) !important;
+  color: var(--twitch-purple-light) !important;
   font-size: 1.25rem !important;
+}
+
+body.overlay-mode .quiz-timer-display #quiz-timer-sec {
+  color: var(--twitch-purple-light) !important;
+}
+
+body.overlay-mode .quiz-timer-display.danger {
+  color: var(--accent-red) !important;
+  border-color: rgba(235, 4, 0, 0.4) !important;
+  background: rgba(235, 4, 0, 0.15) !important;
+}
+
+body.overlay-mode .quiz-timer-display.danger #quiz-timer-sec {
+  color: var(--accent-red) !important;
 }
 
 body.overlay-mode .option-card {
