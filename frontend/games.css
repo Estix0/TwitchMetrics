@@ -986,6 +986,46 @@ h1, h2, h3, h4, .brand-title, .letter-tile, .spinner-name, .option-key, .quiz-qu
   background: rgba(145, 70, 255, 0.08);
 }
 
+#hangman-saved-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--twitch-purple) var(--twitch-elevated);
+}
+
+#hangman-saved-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+#hangman-saved-list::-webkit-scrollbar-thumb {
+  background: var(--twitch-purple);
+  border-radius: 4px;
+}
+
+#hangman-saved-list::-webkit-scrollbar-track {
+  background: var(--twitch-base);
+}
+
+.hangman-word-card {
+  background: var(--twitch-base);
+  border: 1px solid var(--twitch-border);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  transition: all var(--transition-fast);
+}
+
+.hangman-word-card:hover {
+  border-color: var(--twitch-border-light);
+  background: var(--twitch-elevated);
+}
+
+.hangman-word-card.active {
+  border-color: var(--twitch-purple);
+  background: rgba(145, 70, 255, 0.08);
+}
+
 /* ==========================================================================
    OBS OVERLAY BROADCAST MODE (?overlay=1)
    100% Transparent Canvas for OBS Studio Browser Source
@@ -1412,6 +1452,9 @@ body.overlay-mode .giveaway-csprng-badge {
   padding: 1.5rem;
   max-width: 540px;
   width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
 }
 
 #toast-container {

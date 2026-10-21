@@ -11,7 +11,7 @@ import zoneinfo
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager, asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Header, Depends, status, Response
+from fastapi import FastAPI, HTTPException, Query, Header, Depends, status, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -900,7 +900,9 @@ GAME_STATE: Dict[str, Any] = {
 
 def init_game_state_store():
     try:
-        with sqlite3.connect(current_db, timeout=10.0) as conn:
+        db_path = resolve_db_file()
+        with sqlite3.connect(db_path, timeout=10.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS game_state_store (
                     id INTEGER PRIMARY KEY,
@@ -909,54 +911,76 @@ def init_game_state_store():
                     updated_at REAL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS hangman_words (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    word TEXT NOT NULL UNIQUE,
+                    category TEXT NOT NULL,
+                    hint TEXT DEFAULT '',
+                    created_at REAL
+                )
+            """)
+            count_row = conn.execute("SELECT COUNT(*) FROM hangman_words").fetchone()
+            if count_row and count_row[0] == 0:
+                default_words = [
+                    ("WIEDŹMIN DZIKI GON", "Gry Komputerowe", "Kultowy RPG od polskiego studia CD Projekt Red", time.time()),
+                    ("CYBERPUNK", "Gry Komputerowe", "Futurystyczne Night City i Johnny Silverhand", time.time()),
+                    ("MINECRAFT", "Gry Komputerowe", "Klockowy świat, creepery i crafting", time.time()),
+                    ("GOTHIC", "Gry Komputerowe", "Kolonia karna, magiczna bariera i Bezimienny", time.time()),
+                    ("LEAGUE OF LEGENDS", "Gry Komputerowe", "Summoner's Rift i zniszczenie nexusa", time.time()),
+                    ("SHREK", "Filmy i Animacje", "Zielony ogr, gadający osioł i bagno", time.time()),
+                    ("STAR WARS", "Filmy i Seriale", "Rycerze Jedi, miecze świetlne i ciemna strona mocy", time.time()),
+                    ("PIEROGI RUSKIE", "Jedzenie", "Tradycyjne polskie danie z twarogiem i ziemniakami", time.time())
+                ]
+                conn.executemany("INSERT OR IGNORE INTO hangman_words (word, category, hint, created_at) VALUES (?, ?, ?, ?)", default_words)
             conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[init_game_state_store] Error: {e}")
 
 init_game_state_store()
 
-_local_state_cache: Optional[Dict[str, Any]] = None
-_local_cache_time: float = 0.0
-
 def load_persisted_game_state() -> Dict[str, Any]:
-    global _local_state_cache, _local_cache_time, GAME_STATE
-    now = time.time()
-    if _local_state_cache is not None and (now - _local_cache_time) < 0.05:
-        return _local_state_cache
+    global GAME_STATE
+    db_path = resolve_db_file()
     try:
-        with sqlite3.connect(current_db, timeout=5.0) as conn:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             row = conn.execute("SELECT version, state_json FROM game_state_store WHERE id = 1").fetchone()
             if row and row[1]:
                 state = json.loads(row[1])
                 state["version"] = row[0]
-                _local_state_cache = state
-                _local_cache_time = now
                 GAME_STATE = state
                 return state
     except Exception:
         pass
-    if _local_state_cache is not None:
-        return _local_state_cache
     return GAME_STATE
 
-def save_persisted_game_state(state: Dict[str, Any]):
-    global _local_state_cache, _local_cache_time, GAME_STATE
-    _local_state_cache = state
-    _local_cache_time = time.time()
+def save_persisted_game_state(state: Dict[str, Any]) -> int:
+    global GAME_STATE
     GAME_STATE = state
+    db_path = resolve_db_file()
     try:
-        with sqlite3.connect(current_db, timeout=5.0) as conn:
-            conn.execute("""
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            cur = conn.cursor()
+            cur.execute("""
                 INSERT INTO game_state_store (id, version, state_json, updated_at)
-                VALUES (1, ?, ?, ?)
+                VALUES (1, 1, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
-                    version = excluded.version,
+                    version = game_state_store.version + 1,
                     state_json = excluded.state_json,
                     updated_at = excluded.updated_at
-            """, (state.get("version", 1), json.dumps(state, ensure_ascii=False), time.time()))
+                RETURNING version
+            """, (json.dumps(state, ensure_ascii=False), time.time()))
+            row = cur.fetchone()
             conn.commit()
-    except Exception:
-        pass
+            if row:
+                state["version"] = row[0]
+                return row[0]
+    except Exception as e:
+        print(f"[save_persisted_game_state] Error: {e}")
+    state["version"] = state.get("version", 0) + 1
+    return state["version"]
 
 @app.get("/api/games/state")
 def get_game_state():
@@ -985,9 +1009,8 @@ def update_game_state(new_state: Dict[str, Any]):
         else:
             state[k] = v
 
-    state["version"] = state.get("version", 0) + 1
-    save_persisted_game_state(state)
-    return {"status": "ok", "version": state["version"], "state": state}
+    new_ver = save_persisted_game_state(state)
+    return {"status": "ok", "version": new_ver, "state": state}
 
 @app.post("/api/games/reset")
 def reset_game_state(mode: Optional[str] = Query(None)):
@@ -1015,9 +1038,72 @@ def reset_game_state(mode: Optional[str] = Query(None)):
         state["leaderboard"] = {}
     else:
         state["active_game"] = "quiz"
-    state["version"] = state.get("version", 0) + 1
-    save_persisted_game_state(state)
-    return {"status": "ok", "version": state["version"]}
+    new_ver = save_persisted_game_state(state)
+    return {"status": "ok", "version": new_ver}
+
+@app.get("/api/games/hangman/words")
+def get_hangman_words():
+    """Retrieve saved custom words for Hangman from SQLite database."""
+    db_path = resolve_db_file()
+    try:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT id, word, category, hint, created_at FROM hangman_words ORDER BY id DESC").fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        return []
+
+@app.post("/api/games/hangman/words")
+def save_hangman_word(payload: Dict[str, Any] = Body(...)):
+    """Save or update a Hangman word in SQLite database."""
+    word = payload.get("word", "").strip().upper()
+    category = payload.get("category", "Gry Komputerowe").strip() or "Gry Komputerowe"
+    hint = payload.get("hint", "").strip()
+    if not word or len(word) < 2:
+        raise HTTPException(status_code=400, detail="Hasło musi mieć przynajmniej 2 znaki.")
+    db_path = resolve_db_file()
+    try:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute("""
+                INSERT INTO hangman_words (word, category, hint, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(word) DO UPDATE SET
+                    category = excluded.category,
+                    hint = excluded.hint,
+                    created_at = excluded.created_at
+            """, (word, category, hint, time.time()))
+            conn.commit()
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT id, word, category, hint, created_at FROM hangman_words ORDER BY id DESC").fetchall()
+            return {"status": "ok", "words": [dict(r) for r in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/games/hangman/words/{word_id}")
+def delete_hangman_word(word_id: int):
+    """Delete a Hangman word by ID from SQLite database."""
+    db_path = resolve_db_file()
+    try:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute("DELETE FROM hangman_words WHERE id = ?", (word_id,))
+            conn.commit()
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT id, word, category, hint, created_at FROM hangman_words ORDER BY id DESC").fetchall()
+            return {"status": "ok", "words": [dict(r) for r in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/games/hangman/words")
+def clear_all_hangman_words():
+    """Clear all Hangman words from SQLite database."""
+    db_path = resolve_db_file()
+    try:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute("DELETE FROM hangman_words")
+            conn.commit()
+            return {"status": "ok", "words": []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/games/active-chatters")
 def get_active_chatters(minutes: int = Query(2, ge=1, le=60)):

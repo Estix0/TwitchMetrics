@@ -285,6 +285,8 @@ function applyServerState(data) {
   if (data.quiz) {
     const sq = data.quiz;
     const wasRevealed = state.quiz.revealed;
+    const prevQ = state.quiz.currentQuestion ? state.quiz.currentQuestion.question : '';
+    const prevState = state.quiz.state;
 
     if (sq.question) {
       state.quiz.currentQuestion = {
@@ -301,13 +303,37 @@ function applyServerState(data) {
       state.quiz.currentQuestion = null;
     }
 
-    state.quiz.state = sq.state || 'idle';
-    state.quiz.timerVal = sq.timer_val !== undefined ? sq.timer_val : (sq.duration_seconds || 30);
+    const currentQ = state.quiz.currentQuestion ? state.quiz.currentQuestion.question : '';
+    const sameQuestion = (prevQ === currentQ && currentQ !== '');
+    const incomingState = sq.state || 'idle';
+    const incomingTimer = sq.timer_val !== undefined ? sq.timer_val : (sq.duration_seconds || 30);
+    const incomingVotes = sq.answers_count || 0;
+
+    state.quiz.state = incomingState;
     state.quiz.timerMax = sq.duration_seconds || 30;
-    state.quiz.remoteAnswersCount = sq.answers_count || 0;
-    state.quiz.remoteDistribution = sq.distribution || { A: 0, B: 0, C: 0, D: 0 };
     state.quiz.remotePodium = sq.podium || [];
     state.quiz.revealed = !!sq.revealed;
+
+    // MONOTONIC ANTI-JUMP PROTECTION FOR OBS OVERLAY:
+    if (state.isOverlay && incomingState === 'active' && prevState === 'active' && sameQuestion) {
+      // 1. Timer can only count down during an active round. Reject stale jitter packets jumping upwards (e.g. 23s -> 30s)
+      if (incomingTimer > state.quiz.timerVal && (incomingTimer - state.quiz.timerVal) <= 6) {
+        // Ignore stale higher timer
+      } else {
+        state.quiz.timerVal = incomingTimer;
+      }
+
+      // 2. Answers count can only increase during active voting. Never jump downwards to 0 or fewer answers!
+      if (incomingVotes >= (state.quiz.remoteAnswersCount || 0)) {
+        state.quiz.remoteAnswersCount = incomingVotes;
+        if (sq.distribution) state.quiz.remoteDistribution = sq.distribution;
+      }
+    } else {
+      // Fresh round started, round ended, or question changed: apply authoritative state
+      state.quiz.timerVal = incomingTimer;
+      state.quiz.remoteAnswersCount = incomingVotes;
+      state.quiz.remoteDistribution = sq.distribution || { A: 0, B: 0, C: 0, D: 0 };
+    }
 
     renderQuizUI();
 
@@ -401,7 +427,18 @@ window.addEventListener('DOMContentLoaded', async () => {
       renderQuizEmptyState();
     }
 
-    loadSavedHangman();
+    await loadSavedHangman();
+    try {
+      const sRes = await fetch(`${API_BASE}/games/state`);
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        if (sData.hangman && sData.hangman.word) {
+          state.hangman.word = sData.hangman.word;
+          state.hangman.category = sData.hangman.category || 'Gry Komputerowe';
+          state.hangman.hint = sData.hangman.hint || '';
+        }
+      }
+    } catch (e) {}
     setupHangmanWord(state.hangman.word, state.hangman.category, state.hangman.hint, false);
 
     ['input-custom-word', 'input-custom-cat', 'input-custom-hint'].forEach(id => {
@@ -1916,10 +1953,45 @@ function openCustomWordModal() {
   }, 50);
 }
 
-function applyCustomWord() {
-  const word = document.getElementById('input-custom-word').value.trim();
-  const cat = document.getElementById('input-custom-cat').value.trim() || 'Własne Hasło';
-  const hint = document.getElementById('input-custom-hint').value.trim();
+async function saveCustomWordOnly() {
+  const word = (document.getElementById('input-custom-word').value || '').trim().toUpperCase();
+  const cat = (document.getElementById('input-custom-cat').value || '').trim() || 'Własne Hasło';
+  const hint = (document.getElementById('input-custom-hint').value || '').trim();
+
+  if (!word || word.length < 2) {
+    showToast('Wpisz hasło o długości przynajmniej 2 liter!', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/games/hangman/words`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word, category: cat, hint })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.words && Array.isArray(data.words)) {
+        state.hangman.wordList = data.words;
+      }
+    }
+  } catch (e) {
+    const existingIdx = state.hangman.wordList.findIndex(item => item.word.toUpperCase().trim() === word);
+    if (existingIdx >= 0) {
+      state.hangman.wordList[existingIdx] = { word, category: cat, hint };
+    } else {
+      state.hangman.wordList.unshift({ word, category: cat, hint });
+    }
+  }
+
+  saveHangmanWordsList();
+  showToast(`Zapisano hasło "${word}" w bazie.`, 'success');
+}
+
+async function applyCustomWord() {
+  const word = (document.getElementById('input-custom-word').value || '').trim().toUpperCase();
+  const cat = (document.getElementById('input-custom-cat').value || '').trim() || 'Własne Hasło';
+  const hint = (document.getElementById('input-custom-hint').value || '').trim();
 
   if (!word || word.length < 2) {
     showToast('Wpisz hasło o długości przynajmniej 2 liter!', 'error');
@@ -1927,10 +1999,25 @@ function applyCustomWord() {
   }
 
   closeModal('modal-custom-word');
+
+  fetch(`${API_BASE}/games/hangman/words`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ word, category: cat, hint })
+  }).then(async res => {
+    if (res.ok) {
+      const data = await res.json();
+      if (data.words && Array.isArray(data.words)) {
+        state.hangman.wordList = data.words;
+        saveHangmanWordsList();
+      }
+    }
+  }).catch(() => {});
+
   setupHangmanWord(word, cat, hint, true);
 }
 
-function loadSavedHangman() {
+async function loadSavedHangman() {
   const savedList = localStorage.getItem('tm_hangman_words');
   if (savedList) {
     try {
@@ -1938,7 +2025,20 @@ function loadSavedHangman() {
     } catch (e) {
       state.hangman.wordList = [];
     }
-  } else {
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/games/hangman/words?t=${Date.now()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        state.hangman.wordList = data;
+        localStorage.setItem('tm_hangman_words', JSON.stringify(data));
+      }
+    }
+  } catch (e) {}
+
+  if (!state.hangman.wordList || state.hangman.wordList.length === 0) {
     state.hangman.wordList = [
       { word: 'WIEDŹMIN DZIKI GON', category: 'Gry Komputerowe', hint: 'Kultowy RPG od CD Projekt Red' }
     ];
@@ -1954,7 +2054,7 @@ function loadSavedHangman() {
         state.hangman.hint = cur.hint || '';
       }
     } catch (e) {}
-  } else if (state.hangman.wordList.length > 0) {
+  } else if (!state.hangman.word && state.hangman.wordList.length > 0) {
     state.hangman.word = state.hangman.wordList[0].word.toUpperCase().trim();
     state.hangman.category = state.hangman.wordList[0].category || 'Gry Komputerowe';
     state.hangman.hint = state.hangman.wordList[0].hint || '';
@@ -1974,7 +2074,7 @@ function saveHangmanCurrent(word, category, hint) {
     if (!Array.isArray(state.hangman.wordList)) state.hangman.wordList = [];
     const existingIdx = state.hangman.wordList.findIndex(item => item.word.toUpperCase().trim() === normWord);
     if (existingIdx >= 0) {
-      state.hangman.wordList[existingIdx] = { word: normWord, category: cat, hint: h };
+      state.hangman.wordList[existingIdx] = { ...state.hangman.wordList[existingIdx], word: normWord, category: cat, hint: h };
     } else {
       state.hangman.wordList.unshift({ word: normWord, category: cat, hint: h });
     }
@@ -1988,15 +2088,39 @@ function saveHangmanWordsList() {
 }
 
 function updateHangmanManagerUI() {
+  const count = (state.hangman.wordList && Array.isArray(state.hangman.wordList)) ? state.hangman.wordList.length : 0;
   const btnCount = document.getElementById('btn-count-loaded-words');
   if (btnCount) {
-    btnCount.innerText = `Baza Haseł (${state.hangman.wordList.length})`;
+    btnCount.innerText = `Baza Haseł (${count})`;
   }
   const modalCount = document.getElementById('hangman-saved-count');
   if (modalCount) {
-    modalCount.innerText = state.hangman.wordList.length;
+    modalCount.innerText = `${count} haseł`;
   }
   renderSavedHangmanWords();
+
+  // Sidebar Quick List for Hangman
+  const quickList = document.getElementById('quick-hangman-list');
+  if (quickList) {
+    if (count === 0) {
+      quickList.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.8rem;">Brak haseł. Kliknij "Zarządzaj" powyżej.</div>';
+    } else {
+      quickList.innerHTML = state.hangman.wordList.map((item, idx) => {
+        const isCurrent = (item.word.toUpperCase().trim() === (state.hangman.word || '').toUpperCase().trim());
+        return `
+          <div class="leader-item ${isCurrent ? 'rank-1' : ''}" style="cursor: pointer;" onclick="loadHangmanWordFromBank(${idx})" title="Kliknij, aby natychmiast uruchomić to hasło">
+            <div class="leader-left">
+              <span class="rank-badge">${idx + 1}</span>
+              <span class="leader-name" style="font-size: 0.825rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;">
+                ${escapeHtml(item.word)}
+              </span>
+            </div>
+            <span style="font-size: 0.7rem; color: var(--text-muted); white-space: nowrap;">${escapeHtml(item.category || '')}</span>
+          </div>
+        `;
+      }).join('');
+    }
+  }
 }
 
 function renderSavedHangmanWords() {
@@ -2004,29 +2128,30 @@ function renderSavedHangmanWords() {
   if (!container) return;
 
   if (!state.hangman.wordList || state.hangman.wordList.length === 0) {
-    container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.8rem;">Brak zapisanych haseł w bazie. Wpisz hasło powyżej i kliknij Rozpocznij Hasło.</div>';
+    container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1.5rem; font-size: 0.85rem;">Brak zapisanych haseł w bazie serwera. Wpisz hasło powyżej i kliknij "Zapisz w Bazie".</div>';
     return;
   }
 
   container.innerHTML = state.hangman.wordList.map((item, idx) => {
     const isCurrent = (item.word.toUpperCase().trim() === (state.hangman.word || '').toUpperCase().trim());
     return `
-      <div class="qm-item ${isCurrent ? 'active' : ''}" style="display: flex; justify-content: space-between; align-items: center; padding: 0.45rem 0.65rem; border-radius: var(--radius-sm);">
-        <div style="flex: 1; min-width: 0; cursor: pointer;" onclick="selectSavedHangmanWord(${idx})">
-          <div style="font-weight: 700; font-size: 0.875rem; color: #fff; font-family: 'Fredoka', 'Montserrat', sans-serif;">
-            ${escapeHtml(item.word)}
+      <div class="hangman-word-card ${isCurrent ? 'active' : ''}">
+        <div style="flex: 1; min-width: 0; cursor: pointer;" onclick="selectSavedHangmanWord(${idx})" title="Kliknij, aby skopiować do formularza">
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.2rem; flex-wrap: wrap;">
+            <span class="category-tag" style="font-size: 0.68rem; padding: 0.15rem 0.45rem;">${escapeHtml(item.category || 'Ogólne')}</span>
+            <span style="font-weight: 700; font-size: 0.925rem; color: #fff; font-family: 'Fredoka', 'Montserrat', sans-serif; letter-spacing: 0.03em;">
+              ${escapeHtml(item.word)}
+            </span>
+            ${isCurrent ? '<span style="color: var(--twitch-purple-light); font-size: 0.72rem; font-weight: 700;">(AKTYWNE)</span>' : ''}
           </div>
-          <div style="font-size: 0.725rem; color: var(--text-secondary); display: flex; gap: 0.4rem; align-items: center; margin-top: 0.15rem;">
-            <span class="category-tag" style="font-size: 0.65rem; padding: 0.1rem 0.4rem;">${escapeHtml(item.category || 'Hasło')}</span>
-            ${item.hint ? `<span style="color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(item.hint)}</span>` : ''}
-          </div>
+          ${item.hint ? `<div style="font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Podpowiedź: ${escapeHtml(item.hint)}</div>` : ''}
         </div>
-        <div style="display: flex; gap: 0.35rem; align-items: center;">
-          <button class="btn btn-secondary btn-icon" onclick="selectSavedHangmanWord(${idx})" title="Wczytaj to hasło" style="font-size: 0.75rem; padding: 0.25rem 0.55rem;">
+        <div style="display: flex; gap: 0.45rem; align-items: center; flex-shrink: 0;">
+          <button class="btn btn-secondary" onclick="loadHangmanWordFromBank(${idx})" title="Uruchom to hasło" style="font-size: 0.78rem; padding: 0.35rem 0.65rem;">
             Wybierz
           </button>
-          <button class="btn btn-danger btn-icon" onclick="deleteSavedHangmanWord(${idx}, event)" title="Usuń z bazy" style="font-size: 0.75rem; padding: 0.25rem 0.45rem;">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <button class="btn btn-danger btn-icon" onclick="deleteSavedHangmanWord(${idx}, event)" title="Usuń z bazy">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
           </button>
         </div>
       </div>
@@ -2046,22 +2171,52 @@ function selectSavedHangmanWord(idx) {
   if (catInput) catInput.value = item.category || '';
   if (hintInput) hintInput.value = item.hint || '';
 
-  showToast(`Wybrano hasło: ${item.word}`, 'info');
+  showToast(`Wypełniono formularz hasłem: ${item.word}`, 'info');
 }
 
-function deleteSavedHangmanWord(idx, ev) {
+function loadHangmanWordFromBank(idx) {
+  const item = state.hangman.wordList[idx];
+  if (!item) return;
+
+  closeModal('modal-custom-word');
+  setupHangmanWord(item.word, item.category || 'Gry Komputerowe', item.hint || '', true);
+  updateHangmanManagerUI();
+}
+
+async function deleteSavedHangmanWord(idx, ev) {
   if (ev) ev.stopPropagation();
-  if (idx >= 0 && idx < state.hangman.wordList.length) {
-    const removed = state.hangman.wordList.splice(idx, 1);
-    saveHangmanWordsList();
-    showToast(`Usunięto hasło "${removed[0].word}" z bazy.`, 'info');
+  if (idx < 0 || idx >= state.hangman.wordList.length) return;
+
+  const item = state.hangman.wordList[idx];
+  const wordName = item.word;
+  const wordId = item.id;
+
+  state.hangman.wordList.splice(idx, 1);
+  saveHangmanWordsList();
+
+  if (wordId) {
+    try {
+      const res = await fetch(`${API_BASE}/games/hangman/words/${wordId}`, { method: 'DELETE' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.words && Array.isArray(data.words)) {
+          state.hangman.wordList = data.words;
+          saveHangmanWordsList();
+        }
+      }
+    } catch (e) {}
   }
+
+  showToast(`Usunięto hasło "${wordName}" z bazy.`, 'info');
 }
 
-function clearAllHangmanWords() {
-  if (confirm('Czy na pewno chcesz usunąć wszystkie zapisane hasła do Wisielca?')) {
+async function clearAllHangmanWords() {
+  if (confirm('Czy na pewno chcesz usunąć wszystkie zapisane hasła do Wisielca z bazy danych?')) {
     state.hangman.wordList = [];
     saveHangmanWordsList();
+    try {
+      await fetch(`${API_BASE}/games/hangman/words`, { method: 'DELETE' });
+    } catch (e) {}
     showToast('Wyczyszczono bazę haseł Wisielca.', 'info');
   }
 }
