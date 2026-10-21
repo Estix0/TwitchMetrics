@@ -1,13 +1,15 @@
 import os
 import io
 import csv
+import json
+import time
 import random
 import sqlite3
 import traceback
 from datetime import datetime, timedelta, timezone
 import zoneinfo
 from typing import Optional, List, Dict, Any
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, status, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,17 +27,6 @@ try:
 except ImportError:
     pass
 
-app = FastAPI(title="TwitchMetrics API", version="2.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
-)
-
 def resolve_db_file():
     db_env = os.getenv("DB_FILE", "messages.db")
     if os.path.exists(db_env):
@@ -46,8 +37,23 @@ def resolve_db_file():
         return "./data/channel1/messages.db"
     return db_env
 
+def resolve_channel_name():
+    ch = os.getenv("CHANNEL")
+    if ch:
+        return ch.strip().lstrip('#')
+    try:
+        current_db = resolve_db_file()
+        if os.path.exists(current_db):
+            with sqlite3.connect(current_db) as conn:
+                row = conn.execute("SELECT channel FROM streams WHERE channel IS NOT NULL AND channel != '' LIMIT 1").fetchone()
+                if row and row[0]:
+                    return row[0].strip().lstrip('#')
+    except Exception:
+        pass
+    return "Streamer"
+
 DB_FILE = resolve_db_file()
-CHANNEL = os.getenv("CHANNEL", "Streamer").strip().lstrip('#')
+CHANNEL = resolve_channel_name()
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "").strip()
 PANEL_TIMEZONE = os.getenv("PANEL_TIMEZONE", "Europe/Warsaw").strip()
 
@@ -61,13 +67,27 @@ def get_target_timezone(
         zoneinfo.ZoneInfo(candidate)
         return candidate
     except Exception:
-        return PANEL_TIMEZONE
+        try:
+            zoneinfo.ZoneInfo(PANEL_TIMEZONE)
+            return PANEL_TIMEZONE
+        except Exception:
+            return "Europe/Warsaw"
+
+def _resolve_tz(tz_name: Optional[str]):
+    candidate = tz_name or PANEL_TIMEZONE
+    try:
+        return zoneinfo.ZoneInfo(candidate)
+    except Exception:
+        try:
+            return zoneinfo.ZoneInfo(PANEL_TIMEZONE)
+        except Exception:
+            return timezone.utc
 
 def to_local_datetime(utc_str: Optional[str], tz_name: Optional[str] = None) -> Optional[str]:
     if not utc_str:
         return None
     try:
-        target_tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
+        target_tz = _resolve_tz(tz_name)
         dt = datetime.fromisoformat(utc_str.replace(" ", "T")).replace(tzinfo=timezone.utc)
         return dt.astimezone(target_tz).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
@@ -77,7 +97,7 @@ def to_local_date(utc_str: Optional[str], tz_name: Optional[str] = None) -> Opti
     if not utc_str:
         return None
     try:
-        target_tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
+        target_tz = _resolve_tz(tz_name)
         dt = datetime.fromisoformat(utc_str.replace(" ", "T")).replace(tzinfo=timezone.utc)
         return dt.astimezone(target_tz).strftime("%Y-%m-%d")
     except Exception:
@@ -87,7 +107,7 @@ def to_local_hour(utc_str: Optional[str], tz_name: Optional[str] = None) -> Opti
     if not utc_str:
         return None
     try:
-        target_tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
+        target_tz = _resolve_tz(tz_name)
         dt = datetime.fromisoformat(utc_str.replace(" ", "T")).replace(tzinfo=timezone.utc)
         return dt.astimezone(target_tz).strftime("%H")
     except Exception:
@@ -97,7 +117,7 @@ def to_local_minute(utc_str: Optional[str], tz_name: Optional[str] = None) -> Op
     if not utc_str:
         return None
     try:
-        target_tz = zoneinfo.ZoneInfo(tz_name or PANEL_TIMEZONE)
+        target_tz = _resolve_tz(tz_name)
         dt = datetime.fromisoformat(utc_str.replace(" ", "T")).replace(tzinfo=timezone.utc)
         return dt.astimezone(target_tz).strftime("%Y-%m-%d %H:%M")
     except Exception:
@@ -146,8 +166,8 @@ def ensure_indexes():
     except Exception as e:
         print(f"[DB] Indeksowanie pominięte lub błąd: {e}")
 
-@app.on_event("startup")
-def on_startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     ensure_indexes()
     try:
         with get_db() as conn:
@@ -169,6 +189,18 @@ def on_startup():
             conn.commit()
     except Exception as e:
         print(f"[DB] Błąd auto-naprawy end_time: {e}")
+    yield
+
+app = FastAPI(title="TwitchMetrics API", version="2.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+)
 
 def verify_auth(
     x_panel_password: Optional[str] = Header(None, alias="X-Panel-Password"),
@@ -582,7 +614,7 @@ def get_streams_list(
                         effective_end_str = row["last_msg_time"]
 
                 start_dt = datetime.fromisoformat(row["start_time"].replace(" ", "T")) if row["start_time"] else None
-                end_dt = datetime.fromisoformat(effective_end_str.replace(" ", "T")) if (effective_end_str and not is_live) else (datetime.utcnow() if is_live else None)
+                end_dt = datetime.fromisoformat(effective_end_str.replace(" ", "T")) if (effective_end_str and not is_live) else (datetime.now(timezone.utc).replace(tzinfo=None) if is_live else None)
 
                 duration_min = 0
                 if start_dt and end_dt:
@@ -698,7 +730,7 @@ def get_stream_details(
 
             # Duration formatting
             start_dt = datetime.fromisoformat(stream_info["start_time"].replace(" ", "T")) if stream_info["start_time"] else None
-            end_dt = datetime.fromisoformat(effective_end_str.replace(" ", "T")) if (effective_end_str and not is_live) else (datetime.utcnow() if is_live else None)
+            end_dt = datetime.fromisoformat(effective_end_str.replace(" ", "T")) if (effective_end_str and not is_live) else (datetime.now(timezone.utc).replace(tzinfo=None) if is_live else None)
             duration_str = "-"
             if start_dt and end_dt:
                 diff = end_dt - start_dt
@@ -816,17 +848,14 @@ def export_user_messages_csv(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============================================================================
-# STREAM TOOLS & INTERACTIVE ADDONS (Quiz & Hangman "Chatter")
-# ============================================================================
-
+# Synchronized state for games (Host Dashboard <-> OBS Studio Overlay):
 GAME_STATE: Dict[str, Any] = {
-    "active_game": None,  # "quiz" | "hangman" | None
+    "active_game": "quiz",
     "version": 1,
     "quiz": {
         "question": "",
         "category": "Ogólne",
-        "type": "choice",  # "choice" (ABCD) or "open"
+        "type": "choice",
         "options": [
             {"key": "A", "text": ""},
             {"key": "B", "text": ""},
@@ -834,7 +863,7 @@ GAME_STATE: Dict[str, Any] = {
             {"key": "D", "text": ""}
         ],
         "correct_answer": "A",
-        "state": "idle",  # "idle", "active", "revealed"
+        "state": "idle",
         "start_time": None,
         "duration_seconds": 30,
         "answers_count": 0,
@@ -844,16 +873,16 @@ GAME_STATE: Dict[str, Any] = {
         "revealed": False
     },
     "hangman": {
-        "word": "",
-        "category": "Gry",
-        "hint": "",
-        "revealed_letters": [],
+        "word": "WIEDŹMIN DZIKI GON",
+        "category": "Gry Komputerowe",
+        "hint": "Kultowy RPG od CD Projekt Red",
+        "revealed_letters": [" "],
         "wrong_letters": [],
         "max_lives": 6,
         "lives_left": 6,
-        "state": "idle",  # "idle", "playing", "won", "lost"
+        "state": "playing",
         "active_chatter": None,
-        "turn_mode": "chatter",  # "chatter" (turn-based) or "all" (open chat)
+        "turn_mode": "all",
         "turn_start_time": None,
         "turn_timeout_seconds": 45,
         "letter_history": []
@@ -861,7 +890,7 @@ GAME_STATE: Dict[str, Any] = {
     "giveaway": {
         "keyword": "!losowanie",
         "prize": "",
-        "state": "idle",  # "idle", "open", "closed", "drawn"
+        "state": "idle",
         "participants": [],
         "winner": None,
         "history": []
@@ -869,51 +898,126 @@ GAME_STATE: Dict[str, Any] = {
     "leaderboard": {}
 }
 
+def init_game_state_store():
+    try:
+        with sqlite3.connect(current_db, timeout=10.0) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS game_state_store (
+                    id INTEGER PRIMARY KEY,
+                    version INTEGER,
+                    state_json TEXT,
+                    updated_at REAL
+                )
+            """)
+            conn.commit()
+    except Exception:
+        pass
+
+init_game_state_store()
+
+_local_state_cache: Optional[Dict[str, Any]] = None
+_local_cache_time: float = 0.0
+
+def load_persisted_game_state() -> Dict[str, Any]:
+    global _local_state_cache, _local_cache_time, GAME_STATE
+    now = time.time()
+    if _local_state_cache is not None and (now - _local_cache_time) < 0.05:
+        return _local_state_cache
+    try:
+        with sqlite3.connect(current_db, timeout=5.0) as conn:
+            row = conn.execute("SELECT version, state_json FROM game_state_store WHERE id = 1").fetchone()
+            if row and row[1]:
+                state = json.loads(row[1])
+                state["version"] = row[0]
+                _local_state_cache = state
+                _local_cache_time = now
+                GAME_STATE = state
+                return state
+    except Exception:
+        pass
+    if _local_state_cache is not None:
+        return _local_state_cache
+    return GAME_STATE
+
+def save_persisted_game_state(state: Dict[str, Any]):
+    global _local_state_cache, _local_cache_time, GAME_STATE
+    _local_state_cache = state
+    _local_cache_time = time.time()
+    GAME_STATE = state
+    try:
+        with sqlite3.connect(current_db, timeout=5.0) as conn:
+            conn.execute("""
+                INSERT INTO game_state_store (id, version, state_json, updated_at)
+                VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    version = excluded.version,
+                    state_json = excluded.state_json,
+                    updated_at = excluded.updated_at
+            """, (state.get("version", 1), json.dumps(state, ensure_ascii=False), time.time()))
+            conn.commit()
+    except Exception:
+        pass
+
 @app.get("/api/games/state")
 def get_game_state():
     """Retrieve current synchronized game state for Host and OBS Overlay."""
-    return GAME_STATE
+    return load_persisted_game_state()
 
 @app.post("/api/games/state")
 def update_game_state(new_state: Dict[str, Any]):
-    """Update game state from Host controller and notify all listeners."""
-    global GAME_STATE
+    """Merge partial game state updates and increment version."""
+    state = load_persisted_game_state()
+
+    # Protection: Do NOT overwrite an active question with an empty string unless force_empty is True
+    if "quiz" in new_state and isinstance(new_state["quiz"], dict):
+        incoming_q = new_state["quiz"].get("question", "")
+        current_q = state.get("quiz", {}).get("question", "")
+        if not incoming_q and current_q and not new_state.get("force_empty", False):
+            new_state["quiz"]["question"] = current_q
+            if "options" in new_state["quiz"] and not new_state["quiz"]["options"]:
+                new_state["quiz"]["options"] = state["quiz"].get("options", [])
+            if "correct_answer" in new_state["quiz"] and not new_state["quiz"]["correct_answer"]:
+                new_state["quiz"]["correct_answer"] = state["quiz"].get("correct_answer", "A")
+
     for k, v in new_state.items():
-        if isinstance(v, dict) and k in GAME_STATE and isinstance(GAME_STATE[k], dict):
-            GAME_STATE[k].update(v)
+        if isinstance(v, dict) and k in state and isinstance(state[k], dict):
+            state[k].update(v)
         else:
-            GAME_STATE[k] = v
-    GAME_STATE["version"] = GAME_STATE.get("version", 0) + 1
-    return {"status": "ok", "version": GAME_STATE["version"], "state": GAME_STATE}
+            state[k] = v
+
+    state["version"] = state.get("version", 0) + 1
+    save_persisted_game_state(state)
+    return {"status": "ok", "version": state["version"], "state": state}
 
 @app.post("/api/games/reset")
 def reset_game_state(mode: Optional[str] = Query(None)):
     """Reset a specific game mode or global leaderboard."""
-    global GAME_STATE
+    state = load_persisted_game_state()
     if mode == "quiz":
-        GAME_STATE["quiz"]["state"] = "idle"
-        GAME_STATE["quiz"]["answers_count"] = 0
-        GAME_STATE["quiz"]["distribution"] = {"A": 0, "B": 0, "C": 0, "D": 0}
-        GAME_STATE["quiz"]["recent_answers"] = []
-        GAME_STATE["quiz"]["podium"] = []
-        GAME_STATE["quiz"]["revealed"] = False
+        state["quiz"]["state"] = "idle"
+        state["quiz"]["answers_count"] = 0
+        state["quiz"]["distribution"] = {"A": 0, "B": 0, "C": 0, "D": 0}
+        state["quiz"]["recent_answers"] = []
+        state["quiz"]["podium"] = []
+        state["quiz"]["revealed"] = False
     elif mode == "hangman":
-        GAME_STATE["hangman"]["state"] = "idle"
-        GAME_STATE["hangman"]["revealed_letters"] = []
-        GAME_STATE["hangman"]["wrong_letters"] = []
-        GAME_STATE["hangman"]["lives_left"] = GAME_STATE["hangman"].get("max_lives", 6)
-        GAME_STATE["hangman"]["active_chatter"] = None
-        GAME_STATE["hangman"]["letter_history"] = []
+        state["hangman"]["state"] = "idle"
+        state["hangman"]["revealed_letters"] = []
+        state["hangman"]["wrong_letters"] = []
+        state["hangman"]["lives_left"] = state["hangman"].get("max_lives", 6)
+        state["hangman"]["active_chatter"] = None
+        state["hangman"]["letter_history"] = []
     elif mode == "giveaway":
-        GAME_STATE["giveaway"]["state"] = "idle"
-        GAME_STATE["giveaway"]["participants"] = []
-        GAME_STATE["giveaway"]["winner"] = None
+        state["giveaway"]["state"] = "idle"
+        state["giveaway"]["participants"] = []
+        state["giveaway"]["winner"] = None
     elif mode == "leaderboard":
-        GAME_STATE["leaderboard"] = {}
+        state["leaderboard"] = {}
     else:
-        GAME_STATE["active_game"] = None
-    GAME_STATE["version"] = GAME_STATE.get("version", 0) + 1
-    return {"status": "ok", "version": GAME_STATE["version"]}
+        state["active_game"] = "quiz"
+    state["version"] = state.get("version", 0) + 1
+    save_persisted_game_state(state)
+    return {"status": "ok", "version": state["version"]}
 
 @app.get("/api/games/active-chatters")
 def get_active_chatters(minutes: int = Query(2, ge=1, le=60)):
@@ -1046,6 +1150,9 @@ def export_quiz_results(data: Dict[str, Any]):
 
 # Mount static files and webpanel
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+if not os.path.isdir(FRONTEND_DIR) or not os.path.exists(os.path.join(FRONTEND_DIR, "index.html")):
+    FRONTEND_DIR = os.path.dirname(os.path.abspath(__file__))
+
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
@@ -1053,16 +1160,31 @@ if os.path.isdir(FRONTEND_DIR):
 def read_root():
     index_path = os.path.join(FRONTEND_DIR, "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        return FileResponse(index_path, media_type="text/html; charset=utf-8")
     return {"status": "ok", "message": "TwitchMetrics API is running"}
 
 @app.get("/games")
+@app.get("/games/")
 @app.get("/games.html")
 def read_games():
     games_path = os.path.join(FRONTEND_DIR, "games.html")
     if os.path.exists(games_path):
-        return FileResponse(games_path)
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+        return FileResponse(games_path, media_type="text/html; charset=utf-8")
+    index_path = os.path.join(FRONTEND_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path, media_type="text/html; charset=utf-8")
+    return {"status": "ok", "message": "Games page not found"}
 
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    host = os.getenv("HOST", "127.0.0.1")
+    reload_env = os.getenv("RELOAD", "false").lower() in ("true", "1", "yes")
+    print(f"TwitchMetrics server starting on http://{host}:{port} (reload={reload_env})")
+    if reload_env:
+        uvicorn.run("api:app", host=host, port=port, reload=True, reload_excludes=["*.db*", "*.sqlite*", "*.log"])
+    else:
+        uvicorn.run(app, host=host, port=port, reload=False)
