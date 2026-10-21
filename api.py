@@ -28,14 +28,27 @@ except ImportError:
     pass
 
 def resolve_db_file():
-    db_env = os.getenv("DB_FILE", "messages.db")
-    if os.path.exists(db_env):
-        return db_env
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    db_env = os.getenv("DB_FILE")
+    if db_env:
+        if os.path.isabs(db_env) and os.path.exists(db_env):
+            return db_env
+        cand = os.path.join(base_dir, db_env)
+        if os.path.exists(cand):
+            return cand
+        if os.path.exists(db_env):
+            return os.path.abspath(db_env)
+        return cand
+
+    cand_here = os.path.join(base_dir, "messages.db")
+    if os.path.exists(cand_here):
+        return cand_here
+    cand_data = os.path.join(base_dir, "data", "channel1", "messages.db")
+    if os.path.exists(cand_data):
+        return cand_data
     if os.path.exists("messages.db"):
-        return "messages.db"
-    if os.path.exists("./data/channel1/messages.db"):
-        return "./data/channel1/messages.db"
-    return db_env
+        return os.path.abspath("messages.db")
+    return cand_here
 
 def resolve_channel_name():
     ch = os.getenv("CHANNEL")
@@ -920,6 +933,16 @@ def init_game_state_store():
                     created_at REAL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS quiz_questions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    question TEXT NOT NULL,
+                    category TEXT DEFAULT 'Ogólne',
+                    options_json TEXT NOT NULL,
+                    correct_answer TEXT DEFAULT 'A',
+                    created_at REAL
+                )
+            """)
             count_row = conn.execute("SELECT COUNT(*) FROM hangman_words").fetchone()
             if count_row and count_row[0] == 0:
                 default_words = [
@@ -933,6 +956,79 @@ def init_game_state_store():
                     ("PIEROGI RUSKIE", "Jedzenie", "Tradycyjne polskie danie z twarogiem i ziemniakami", time.time())
                 ]
                 conn.executemany("INSERT OR IGNORE INTO hangman_words (word, category, hint, created_at) VALUES (?, ?, ?, ?)", default_words)
+
+            q_count_row = conn.execute("SELECT COUNT(*) FROM quiz_questions").fetchone()
+            if q_count_row and q_count_row[0] == 0:
+                default_questions = [
+                    (
+                        "Która z poniższych gier została stworzona przez studio CD Projekt RED?",
+                        "Gry Komputerowe",
+                        json.dumps([
+                            {"key": "A", "text": "Wiedźmin 3: Dziki Gon"},
+                            {"key": "B", "text": "Gothic 2"},
+                            {"key": "C", "text": "Baldur's Gate 3"},
+                            {"key": "D", "text": "Dying Light"}
+                        ], ensure_ascii=False),
+                        "A",
+                        time.time()
+                    ),
+                    (
+                        "W którym roku miała miejsce oficjalna premiera gry Minecraft 1.0?",
+                        "Gry Komputerowe",
+                        json.dumps([
+                            {"key": "A", "text": "2009"},
+                            {"key": "B", "text": "2011"},
+                            {"key": "C", "text": "2013"},
+                            {"key": "D", "text": "2015"}
+                        ], ensure_ascii=False),
+                        "B",
+                        time.time()
+                    ),
+                    (
+                        "Jak nazywa się stolica Polski?",
+                        "Wiedza Ogólna",
+                        json.dumps([
+                            {"key": "A", "text": "Kraków"},
+                            {"key": "B", "text": "Gdańsk"},
+                            {"key": "C", "text": "Warszawa"},
+                            {"key": "D", "text": "Wrocław"}
+                        ], ensure_ascii=False),
+                        "C",
+                        time.time()
+                    )
+                ]
+                conn.executemany("INSERT INTO quiz_questions (question, category, options_json, correct_answer, created_at) VALUES (?, ?, ?, ?, ?)", default_questions)
+
+            # Ensure game_state_store has initial valid state with active question
+            row_st = conn.execute("SELECT version, state_json FROM game_state_store WHERE id = 1").fetchone()
+            if not row_st:
+                first_q = conn.execute("SELECT question, category, options_json, correct_answer FROM quiz_questions ORDER BY id ASC LIMIT 1").fetchone()
+                if first_q:
+                    try:
+                        GAME_STATE["quiz"]["question"] = first_q[0]
+                        GAME_STATE["quiz"]["category"] = first_q[1]
+                        GAME_STATE["quiz"]["options"] = json.loads(first_q[2])
+                        GAME_STATE["quiz"]["correct_answer"] = first_q[3]
+                    except Exception:
+                        pass
+                conn.execute("""
+                    INSERT INTO game_state_store (id, version, state_json, updated_at)
+                    VALUES (1, 1, ?, ?)
+                """, (json.dumps(GAME_STATE, ensure_ascii=False), time.time()))
+            elif row_st and row_st[1]:
+                try:
+                    cur_st = json.loads(row_st[1])
+                    if not cur_st.get("quiz", {}).get("question"):
+                        first_q = conn.execute("SELECT question, category, options_json, correct_answer FROM quiz_questions ORDER BY id ASC LIMIT 1").fetchone()
+                        if first_q:
+                            cur_st.setdefault("quiz", {})
+                            cur_st["quiz"]["question"] = first_q[0]
+                            cur_st["quiz"]["category"] = first_q[1]
+                            cur_st["quiz"]["options"] = json.loads(first_q[2])
+                            cur_st["quiz"]["correct_answer"] = first_q[3]
+                            conn.execute("UPDATE game_state_store SET state_json = ? WHERE id = 1", (json.dumps(cur_st, ensure_ascii=False),))
+                except Exception:
+                    pass
             conn.commit()
     except Exception as e:
         print(f"[init_game_state_store] Error: {e}")
@@ -962,18 +1058,16 @@ def save_persisted_game_state(state: Dict[str, Any]) -> int:
     try:
         with sqlite3.connect(db_path, timeout=5.0) as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
-            cur = conn.cursor()
-            cur.execute("""
+            conn.execute("""
                 INSERT INTO game_state_store (id, version, state_json, updated_at)
                 VALUES (1, 1, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     version = game_state_store.version + 1,
                     state_json = excluded.state_json,
                     updated_at = excluded.updated_at
-                RETURNING version
             """, (json.dumps(state, ensure_ascii=False), time.time()))
-            row = cur.fetchone()
             conn.commit()
+            row = conn.execute("SELECT version FROM game_state_store WHERE id = 1").fetchone()
             if row:
                 state["version"] = row[0]
                 return row[0]
@@ -1102,6 +1196,79 @@ def clear_all_hangman_words():
             conn.execute("DELETE FROM hangman_words")
             conn.commit()
             return {"status": "ok", "words": []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/games/quiz/questions")
+def get_quiz_questions():
+    """Retrieve saved Quiz questions from SQLite database."""
+    db_path = resolve_db_file()
+    try:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT id, question, category, options_json, correct_answer, created_at FROM quiz_questions ORDER BY id ASC").fetchall()
+            result = []
+            for r in rows:
+                opts = []
+                try:
+                    opts = json.loads(r["options_json"])
+                except Exception:
+                    pass
+                result.append({
+                    "id": r["id"],
+                    "question": r["question"],
+                    "category": r["category"] or "Ogólne",
+                    "options": opts,
+                    "correctAnswer": r["correct_answer"] or "A",
+                    "created_at": r["created_at"]
+                })
+            return result
+    except Exception as e:
+        return []
+
+@app.post("/api/games/quiz/questions")
+def save_quiz_questions(payload: Any = Body(...)):
+    """Save or bulk import Quiz questions into SQLite database."""
+    items = payload if isinstance(payload, list) else [payload]
+    db_path = resolve_db_file()
+    try:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            for item in items:
+                q = item.get("question", "").strip()
+                cat = item.get("category", "Ogólne").strip() or "Ogólne"
+                opts = item.get("options", [])
+                correct = item.get("correctAnswer", item.get("correct", "A")).strip().upper()
+                if q:
+                    conn.execute("""
+                        INSERT INTO quiz_questions (question, category, options_json, correct_answer, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (q, cat, json.dumps(opts, ensure_ascii=False), correct, time.time()))
+            conn.commit()
+            return get_quiz_questions()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/games/quiz/questions/{question_id}")
+def delete_quiz_question(question_id: int):
+    """Delete a single Quiz question by ID from SQLite database."""
+    db_path = resolve_db_file()
+    try:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute("DELETE FROM quiz_questions WHERE id = ?", (question_id,))
+            conn.commit()
+            return get_quiz_questions()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/games/quiz/questions")
+def clear_all_quiz_questions():
+    """Clear all Quiz questions from SQLite database."""
+    db_path = resolve_db_file()
+    try:
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            conn.execute("DELETE FROM quiz_questions")
+            conn.commit()
+            return []
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1267,7 +1434,7 @@ if os.path.isdir(FRONTEND_DIR):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    host = os.getenv("HOST", "127.0.0.1")
+    host = os.getenv("HOST", "0.0.0.0")
     reload_env = os.getenv("RELOAD", "false").lower() in ("true", "1", "yes")
     print(f"TwitchMetrics server starting on http://{host}:{port} (reload={reload_env})")
     if reload_env:

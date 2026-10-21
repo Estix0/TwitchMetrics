@@ -588,7 +588,7 @@
 
   <!-- CUSTOM WORD & SAVED WORDS MODAL (Hangman) -->
   <div class="modal-overlay" id="modal-custom-word">
-    <div class="modal-box" style="max-width: 680px; max-height: 88vh; display: flex; flex-direction: column;">
+    <div class="modal-box" style="max-width: 680px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; padding-bottom: 0.65rem; border-bottom: 1px solid var(--twitch-border);">
         <div style="display: flex; align-items: center; gap: 0.65rem;">
           <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem; margin: 0; color: #fff;">
@@ -600,19 +600,19 @@
       </div>
 
       <!-- Add New Word Panel -->
-      <div style="background: var(--twitch-base); border: 1px solid var(--twitch-border); border-radius: var(--radius-sm); padding: 0.9rem; margin-bottom: 1rem; flex-shrink: 0;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.65rem;">
+      <div style="background: var(--twitch-base); border: 1px solid var(--twitch-border); border-radius: var(--radius-sm); padding: 0.85rem; margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
           <span style="font-size: 0.825rem; font-weight: 700; color: #fff;">Dodaj Nowe Hasło</span>
           <span style="font-size: 0.72rem; color: var(--text-muted);">Polskie znaki i spacje dozwolone</span>
         </div>
 
-        <div style="display: flex; flex-direction: column; gap: 0.65rem;">
+        <div style="display: flex; flex-direction: column; gap: 0.55rem;">
           <div>
             <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem; font-weight: 600;">Hasło do odgadnięcia:</label>
             <input type="text" id="input-custom-word" class="input-field" placeholder="np. WIEDŹMIN DZIKI GON" style="text-transform: uppercase; width: 100%; font-family: 'Fredoka', 'Montserrat', sans-serif; font-weight: 600; letter-spacing: 0.04em;">
           </div>
 
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem;">
             <div>
               <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem; font-weight: 600;">Kategoria:</label>
               <input type="text" id="input-custom-cat" class="input-field" placeholder="np. Gry Komputerowe" style="width: 100%;">
@@ -624,15 +624,15 @@
             </div>
           </div>
 
-          <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.35rem;">
+          <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem;">
             <button class="btn btn-secondary" onclick="saveCustomWordOnly()">Zapisz w Bazie</button>
-            <button class="btn btn-success" onclick="applyCustomWord()">Zapisz i Rozpocznij</button>
+            <button class="btn btn-primary" onclick="applyCustomWord()">Zapisz i Rozpocznij</button>
           </div>
         </div>
       </div>
 
       <!-- Saved words list section -->
-      <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+      <div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
           <span style="font-size: 0.8rem; font-weight: 700; color: var(--text-secondary);">
             Zapisane Hasła w Bazie Serwera:
@@ -641,11 +641,11 @@
             Wyczyść Listę
           </button>
         </div>
-        <div id="hangman-saved-list" style="max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 0.25rem;">
+        <div id="hangman-saved-list" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 0.25rem;">
         </div>
       </div>
 
-      <div style="display: flex; justify-content: flex-end; margin-top: 0.85rem; padding-top: 0.65rem; border-top: 1px solid var(--twitch-border);">
+      <div style="display: flex; justify-content: flex-end; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--twitch-border);">
         <button class="btn btn-secondary" onclick="closeModal('modal-custom-word')">Zamknij</button>
       </div>
     </div>

@@ -253,7 +253,7 @@ function startOverlaySync() {
       if (res.ok) {
         const data = await res.json();
         const ver = data.version || 0;
-        if (ver > lastOverlayVersion || (lastOverlayVersion - ver > 50 && ver > 0)) {
+        if (ver !== lastOverlayVersion) {
           lastOverlayVersion = ver;
           applyServerState(data);
         }
@@ -296,10 +296,10 @@ function applyServerState(data) {
         correctAnswer: sq.correct_answer || 'A'
       };
     } else if (state.isOverlay && state.quiz.currentQuestion && state.quiz.currentQuestion.question) {
-      if (sq.state === 'idle' && (!sq.options || sq.options.length === 0)) {
+      if (data.force_empty === true) {
         state.quiz.currentQuestion = null;
       }
-    } else {
+    } else if (!state.isOverlay) {
       state.quiz.currentQuestion = null;
     }
 
@@ -316,14 +316,12 @@ function applyServerState(data) {
 
     // MONOTONIC ANTI-JUMP PROTECTION FOR OBS OVERLAY:
     if (state.isOverlay && incomingState === 'active' && prevState === 'active' && sameQuestion) {
-      // 1. Timer can only count down during an active round. Reject stale jitter packets jumping upwards (e.g. 23s -> 30s)
-      if (incomingTimer > state.quiz.timerVal && (incomingTimer - state.quiz.timerVal) <= 6) {
-        // Ignore stale higher timer
-      } else {
+      // 1. Timer can only count down during an active round.
+      if (incomingTimer < state.quiz.timerVal || incomingTimer >= (state.quiz.timerMax - 1)) {
         state.quiz.timerVal = incomingTimer;
       }
 
-      // 2. Answers count can only increase during active voting. Never jump downwards to 0 or fewer answers!
+      // 2. Answers count can only increase during active voting. Never jump downwards!
       if (incomingVotes >= (state.quiz.remoteAnswersCount || 0)) {
         state.quiz.remoteAnswersCount = incomingVotes;
         if (sq.distribution) state.quiz.remoteDistribution = sq.distribution;
@@ -396,8 +394,8 @@ function applyServerState(data) {
 
 // Inicjalizacja aplikacji i kanalu synchronizacji
 window.addEventListener('DOMContentLoaded', async () => {
-  // Setup BroadcastChannel for fast same-browser sync
-  if ('BroadcastChannel' in window) {
+  // Setup BroadcastChannel ONLY on Host (avoids racing against HTTP poll on overlay)
+  if (!state.isOverlay && 'BroadcastChannel' in window) {
     state.syncChannel = new BroadcastChannel('twitch_games_sync');
     state.syncChannel.onmessage = (ev) => handleSyncMessage(ev.data);
   }
@@ -417,29 +415,78 @@ window.addEventListener('DOMContentLoaded', async () => {
     startOverlaySync();
   } else {
     // Host Mode
-    loadSavedQuestions();
+    await loadSavedQuestions();
+    await loadSavedHangman();
     updateGiveawayUI();
     updateOBSUrls();
 
-    if (state.quiz.questionList.length > 0) {
-      loadQuizQuestion(state.quiz.currentIndex);
-    } else {
-      renderQuizEmptyState();
-    }
-
-    await loadSavedHangman();
+    // Fetch active server state to synchronize with what's running on server
     try {
-      const sRes = await fetch(`${API_BASE}/games/state`);
+      const sRes = await fetch(`${API_BASE}/games/state?t=${Date.now()}`);
       if (sRes.ok) {
         const sData = await sRes.json();
+        // Adopt active game mode if present on server
+        if (sData.active_game && sData.active_game !== 'leaderboard') {
+          switchGameMode(sData.active_game, false);
+        }
+        // Adopt quiz state if question is active
+        if (sData.quiz && sData.quiz.question) {
+          const matchIdx = state.quiz.questionList.findIndex(q => q.question === sData.quiz.question);
+          if (matchIdx >= 0) {
+            state.quiz.currentIndex = matchIdx;
+          }
+          state.quiz.currentQuestion = {
+            question: sData.quiz.question,
+            category: sData.quiz.category || 'Ogólne',
+            options: sData.quiz.options || [],
+            correctAnswer: sData.quiz.correct_answer || 'A'
+          };
+          state.quiz.state = sData.quiz.state || 'idle';
+          state.quiz.timerVal = sData.quiz.timer_val !== undefined ? sData.quiz.timer_val : 30;
+          state.quiz.timerMax = sData.quiz.duration_seconds || 30;
+          renderQuizUI();
+        } else if (state.quiz.questionList.length > 0) {
+          loadQuizQuestion(state.quiz.currentIndex);
+        } else {
+          renderQuizEmptyState();
+        }
+
+        // Adopt hangman state if present
         if (sData.hangman && sData.hangman.word) {
           state.hangman.word = sData.hangman.word;
           state.hangman.category = sData.hangman.category || 'Gry Komputerowe';
           state.hangman.hint = sData.hangman.hint || '';
+          if (sData.hangman.state) state.hangman.state = sData.hangman.state;
+          if (sData.hangman.lives_left !== undefined) state.hangman.livesLeft = sData.hangman.lives_left;
+          if (sData.hangman.revealed_letters) state.hangman.revealedLetters = new Set(sData.hangman.revealed_letters);
+          if (sData.hangman.wrong_letters) state.hangman.wrongLetters = new Set(sData.hangman.wrong_letters);
+          renderHangmanUI();
+        } else {
+          setupHangmanWord(state.hangman.word, state.hangman.category, state.hangman.hint, false);
         }
+
+        // Adopt giveaway state if present
+        if (sData.giveaway) {
+          if (sData.giveaway.keyword) state.giveaway.keyword = sData.giveaway.keyword;
+          if (sData.giveaway.prize) state.giveaway.prize = sData.giveaway.prize;
+          updateGiveawayUI();
+        }
+      } else {
+        if (state.quiz.questionList.length > 0) {
+          loadQuizQuestion(state.quiz.currentIndex);
+        } else {
+          renderQuizEmptyState();
+        }
+        setupHangmanWord(state.hangman.word, state.hangman.category, state.hangman.hint, false);
       }
-    } catch (e) {}
-    setupHangmanWord(state.hangman.word, state.hangman.category, state.hangman.hint, false);
+    } catch (e) {
+      if (state.quiz.questionList.length > 0) {
+        loadQuizQuestion(state.quiz.currentIndex);
+      } else {
+        renderQuizEmptyState();
+      }
+      setupHangmanWord(state.hangman.word, state.hangman.category, state.hangman.hint, false);
+    }
 
     ['input-custom-word', 'input-custom-cat', 'input-custom-hint'].forEach(id => {
       const el = document.getElementById(id);
@@ -449,8 +496,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
       }
     });
+
     startChatPolling();
-    pushStateToServer(true);
+    // Do NOT push empty state to server on load!
   }
 });
 
@@ -459,8 +507,9 @@ function handleSyncMessage(msg) {
   if (msg.type === 'STATE_SYNC') {
     applyServerState(msg.payload);
   } else if (msg.type === 'SWITCH_MODE') {
-    if (!state.isOverlay || msg.mode !== 'leaderboard') {
-      switchGameMode(msg.mode, false);
+    const targetMode = msg.payload || msg.mode;
+    if (targetMode && (!state.isOverlay || targetMode !== 'leaderboard')) {
+      switchGameMode(targetMode, false);
     }
   }
 }
@@ -497,8 +546,15 @@ async function initLatestMsgId() {
 
 // Nawigacja miedzy grami
 function switchGameMode(mode, doBroadcast = true) {
+  if (!mode) return;
   if (state.isOverlay && mode === 'leaderboard') {
     return;
+  }
+
+  // If leaving hangman, stop chatter turn interval so it doesn't push hangman state in the background
+  if (mode !== 'hangman' && state.hangman && state.hangman.turnInterval) {
+    clearInterval(state.hangman.turnInterval);
+    state.hangman.turnInterval = null;
   }
 
   if (mode !== 'leaderboard') {
@@ -520,13 +576,11 @@ function switchGameMode(mode, doBroadcast = true) {
     renderGlobalLeaderboard();
   }
 
-  if (doBroadcast) {
+  if (doBroadcast && !state.isOverlay) {
     // Nie rozglaszaj trybu leaderboard do overlayu w OBS
     if (mode !== 'leaderboard') {
       broadcastSync('SWITCH_MODE', mode);
-      if (!state.isOverlay) {
-        pushStateToServer(true);
-      }
+      pushStateToServer(true);
     }
   }
 }
@@ -573,7 +627,7 @@ function processIncomingMessage(msg) {
 }
 
 // Quiz Engine
-function loadSavedQuestions() {
+async function loadSavedQuestions() {
   const saved = localStorage.getItem('tm_quiz_questions');
   if (saved) {
     try {
@@ -584,12 +638,32 @@ function loadSavedQuestions() {
   } else {
     state.quiz.questionList = [];
   }
+
+  try {
+    const res = await fetch(`${API_BASE}/games/quiz/questions?t=${Date.now()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        state.quiz.questionList = data;
+        localStorage.setItem('tm_quiz_questions', JSON.stringify(data));
+      }
+    }
+  } catch (e) {}
+
   updateQuestionManagerUI();
 }
 
-function saveQuestions() {
+async function saveQuestions() {
   localStorage.setItem('tm_quiz_questions', JSON.stringify(state.quiz.questionList));
   updateQuestionManagerUI();
+
+  try {
+    await fetch(`${API_BASE}/games/quiz/questions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state.quiz.questionList)
+    });
+  } catch (e) {}
 }
 
 function loadQuizQuestion(index) {
@@ -1089,22 +1163,36 @@ function jumpToQuizQuestion(index) {
   loadQuizQuestion(index);
 }
 
-function deleteQuizQuestion(index) {
+async function deleteQuizQuestion(index) {
+  const q = state.quiz.questionList[index];
+  const qId = q ? q.id : null;
   state.quiz.questionList.splice(index, 1);
   saveQuestions();
-  if (state.quiz.currentIndex >= state.quiz.questionList.length) {
-    state.quiz.currentIndex = Math.max(0, state.quiz.questionList.length - 1);
+  if (qId) {
+    try {
+      await fetch(`${API_BASE}/games/quiz/questions/${qId}`, { method: 'DELETE' });
+    } catch (e) {}
   }
-  loadQuizQuestion(state.quiz.currentIndex);
+  if (state.quiz.questionList.length > 0) {
+    state.quiz.currentIndex = Math.max(0, Math.min(index, state.quiz.questionList.length - 1));
+    loadQuizQuestion(state.quiz.currentIndex);
+  } else {
+    state.quiz.currentQuestion = null;
+    renderQuizEmptyState();
+  }
   showToast('Usunięto pytanie.', 'info');
 }
 
-function clearAllQuestions() {
+async function clearAllQuestions() {
   if (confirm("Czy na pewno chcesz usunąć wszystkie załadowane pytania?")) {
     state.quiz.questionList = [];
     state.quiz.currentIndex = 0;
     state.quiz.currentQuestion = null;
-    saveQuestions();
+    localStorage.removeItem('tm_quiz_questions');
+    try {
+      await fetch(`${API_BASE}/games/quiz/questions`, { method: 'DELETE' });
+    } catch (e) {}
+    updateQuestionManagerUI();
     renderQuizEmptyState();
     closeModal('modal-question-manager');
     showToast("Wyczyszczono bazę pytań.", "info");
@@ -1618,13 +1706,12 @@ function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '', notify 
   }
 
   renderHangmanUI();
-  pushStateToServer(true);
   if (notify) {
+    pushStateToServer(true);
     showToast(`Rozpoczęto hasło: ${state.hangman.category}`, 'info');
-  }
-
-  if (state.hangman.turnMode === 'chatter' && !state.isOverlay) {
-    rollActiveChatter();
+    if (state.hangman.turnMode === 'chatter' && !state.isOverlay) {
+      rollActiveChatter();
+    }
   }
 }
 
@@ -1942,9 +2029,9 @@ function openCustomWordModal() {
   const catInput = document.getElementById('input-custom-cat');
   const hintInput = document.getElementById('input-custom-hint');
 
-  if (wordInput) wordInput.value = state.hangman.word || '';
-  if (catInput) catInput.value = state.hangman.category || '';
-  if (hintInput) hintInput.value = state.hangman.hint || '';
+  if (wordInput) wordInput.value = '';
+  if (catInput) catInput.value = 'Gry Komputerowe';
+  if (hintInput) hintInput.value = '';
 
   updateHangmanManagerUI();
   document.getElementById('modal-custom-word').classList.add('active');
@@ -1954,9 +2041,13 @@ function openCustomWordModal() {
 }
 
 async function saveCustomWordOnly() {
-  const word = (document.getElementById('input-custom-word').value || '').trim().toUpperCase();
-  const cat = (document.getElementById('input-custom-cat').value || '').trim() || 'Własne Hasło';
-  const hint = (document.getElementById('input-custom-hint').value || '').trim();
+  const wordInput = document.getElementById('input-custom-word');
+  const catInput = document.getElementById('input-custom-cat');
+  const hintInput = document.getElementById('input-custom-hint');
+
+  const word = (wordInput ? wordInput.value : '').trim().toUpperCase();
+  const cat = (catInput ? catInput.value : '').trim() || 'Gry Komputerowe';
+  const hint = (hintInput ? hintInput.value : '').trim();
 
   if (!word || word.length < 2) {
     showToast('Wpisz hasło o długości przynajmniej 2 liter!', 'error');
@@ -1974,6 +2065,13 @@ async function saveCustomWordOnly() {
       if (data.words && Array.isArray(data.words)) {
         state.hangman.wordList = data.words;
       }
+    } else {
+      const existingIdx = state.hangman.wordList.findIndex(item => item.word.toUpperCase().trim() === word);
+      if (existingIdx >= 0) {
+        state.hangman.wordList[existingIdx] = { word, category: cat, hint };
+      } else {
+        state.hangman.wordList.unshift({ word, category: cat, hint });
+      }
     }
   } catch (e) {
     const existingIdx = state.hangman.wordList.findIndex(item => item.word.toUpperCase().trim() === word);
@@ -1985,13 +2083,19 @@ async function saveCustomWordOnly() {
   }
 
   saveHangmanWordsList();
+  if (wordInput) wordInput.value = '';
+  if (hintInput) hintInput.value = '';
   showToast(`Zapisano hasło "${word}" w bazie.`, 'success');
 }
 
 async function applyCustomWord() {
-  const word = (document.getElementById('input-custom-word').value || '').trim().toUpperCase();
-  const cat = (document.getElementById('input-custom-cat').value || '').trim() || 'Własne Hasło';
-  const hint = (document.getElementById('input-custom-hint').value || '').trim();
+  const wordInput = document.getElementById('input-custom-word');
+  const catInput = document.getElementById('input-custom-cat');
+  const hintInput = document.getElementById('input-custom-hint');
+
+  const word = (wordInput ? wordInput.value : '').trim().toUpperCase();
+  const cat = (catInput ? catInput.value : '').trim() || 'Własne Hasło';
+  const hint = (hintInput ? hintInput.value : '').trim();
 
   if (!word || word.length < 2) {
     showToast('Wpisz hasło o długości przynajmniej 2 liter!', 'error');
@@ -2000,11 +2104,12 @@ async function applyCustomWord() {
 
   closeModal('modal-custom-word');
 
-  fetch(`${API_BASE}/games/hangman/words`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ word, category: cat, hint })
-  }).then(async res => {
+  try {
+    const res = await fetch(`${API_BASE}/games/hangman/words`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word, category: cat, hint })
+    });
     if (res.ok) {
       const data = await res.json();
       if (data.words && Array.isArray(data.words)) {
@@ -2012,7 +2117,7 @@ async function applyCustomWord() {
         saveHangmanWordsList();
       }
     }
-  }).catch(() => {});
+  } catch (e) {}
 
   setupHangmanWord(word, cat, hint, true);
 }
@@ -2136,21 +2241,22 @@ function renderSavedHangmanWords() {
     const isCurrent = (item.word.toUpperCase().trim() === (state.hangman.word || '').toUpperCase().trim());
     return `
       <div class="hangman-word-card ${isCurrent ? 'active' : ''}">
-        <div style="flex: 1; min-width: 0; cursor: pointer;" onclick="selectSavedHangmanWord(${idx})" title="Kliknij, aby skopiować do formularza">
+        <div style="flex: 1; min-width: 0;">
           <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.2rem; flex-wrap: wrap;">
+            <span class="rank-badge" style="width: 22px; height: 22px; font-size: 0.72rem; display: inline-flex; align-items: center; justify-content: center;">${idx + 1}</span>
             <span class="category-tag" style="font-size: 0.68rem; padding: 0.15rem 0.45rem;">${escapeHtml(item.category || 'Ogólne')}</span>
             <span style="font-weight: 700; font-size: 0.925rem; color: #fff; font-family: 'Fredoka', 'Montserrat', sans-serif; letter-spacing: 0.03em;">
               ${escapeHtml(item.word)}
             </span>
             ${isCurrent ? '<span style="color: var(--twitch-purple-light); font-size: 0.72rem; font-weight: 700;">(AKTYWNE)</span>' : ''}
           </div>
-          ${item.hint ? `<div style="font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Podpowiedź: ${escapeHtml(item.hint)}</div>` : ''}
+          ${item.hint ? `<div style="font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 1.85rem;">Podpowiedź: ${escapeHtml(item.hint)}</div>` : ''}
         </div>
         <div style="display: flex; gap: 0.45rem; align-items: center; flex-shrink: 0;">
           <button class="btn btn-secondary" onclick="loadHangmanWordFromBank(${idx})" title="Uruchom to hasło" style="font-size: 0.78rem; padding: 0.35rem 0.65rem;">
             Wybierz
           </button>
-          <button class="btn btn-danger btn-icon" onclick="deleteSavedHangmanWord(${idx}, event)" title="Usuń z bazy">
+          <button class="btn btn-danger btn-icon" onclick="deleteSavedHangmanWord(${idx}, event)" title="Usuń z bazy" style="padding: 0.35rem 0.5rem;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
           </button>
         </div>
@@ -2213,6 +2319,7 @@ async function deleteSavedHangmanWord(idx, ev) {
 async function clearAllHangmanWords() {
   if (confirm('Czy na pewno chcesz usunąć wszystkie zapisane hasła do Wisielca z bazy danych?')) {
     state.hangman.wordList = [];
+    localStorage.removeItem('tm_hangman_words');
     saveHangmanWordsList();
     try {
       await fetch(`${API_BASE}/games/hangman/words`, { method: 'DELETE' });
