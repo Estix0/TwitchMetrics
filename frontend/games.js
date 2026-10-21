@@ -1,13 +1,10 @@
-/**
- * TwitchStreamGames - Frontend Engine
- * Real-time Twitch Chat Quiz (Bulk Import & Hidden Votes), Giveaway Raffle & Hangman
- */
+// TwitchStreamGames Engine
+// Sraken pierdaken jak to nie będzie działać to przeprowadzam się do lasu :>
+// https://www.youtube.com/watch?v=NjOEdJ78eYM :oh:
 
-// ============================================================================
-// APP & GAME STATE
-// ============================================================================
 const state = {
   activeGame: 'quiz', // 'quiz' | 'giveaway' | 'hangman' | 'leaderboard'
+  lastPlayableGame: 'quiz',
   isOverlay: new URLSearchParams(window.location.search).get('overlay') === '1',
   targetGame: new URLSearchParams(window.location.search).get('game') || 'auto',
   channel: 'Streamer',
@@ -39,7 +36,10 @@ const state = {
     isOpen: false,
     participants: new Set(),
     remoteCount: 0,
+    remoteParticipants: [],
     winner: null,
+    lastRollHash: null,
+    rollTrail: [],
     history: [],
     isRolling: false
   },
@@ -63,7 +63,22 @@ const state = {
   leaderboard: new Map() // username -> { score, correctQuiz, correctLetters, lastActive }
 };
 
+// Immediate overlay tag on <html> to prevent any background flash in OBS Studio
+if (state.isOverlay && document.documentElement) {
+  document.documentElement.classList.add('overlay-mode');
+}
+
 const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000/api' : '/api';
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // Audio sounds disabled per streamer preference
 function playSuccessChime() {}
@@ -71,31 +86,27 @@ function playErrorBuzzer() {}
 function playTickSound() {}
 function playFanfare() {}
 
-// ============================================================================
-// CANVAS CONFETTI (Celebration Generator)
-// ============================================================================
+// Confetti generator - lekki, zeby nie spalic procesora bez akceleracji GPU
 let confettiParticles = [];
 let confettiAnimationId = null;
 
-function launchConfetti(durationMs = 4000) {
+function launchConfetti(durationMs = 1500) {
   const canvas = document.getElementById('confetti-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 
-  const colors = ['#9146FF', '#00E6CB', '#FF4F81', '#F5A623', '#10B981', '#ffffff'];
+  const colors = ['#9146FF', '#00d6c6', '#ffb020', '#00ad03', '#ffffff'];
   confettiParticles = [];
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 25; i++) {
     confettiParticles.push({
       x: Math.random() * canvas.width,
-      y: Math.random() * -canvas.height * 0.4,
-      size: Math.random() * 8 + 6,
+      y: Math.random() * -canvas.height * 0.3,
+      size: Math.random() * 6 + 5,
       color: colors[Math.floor(Math.random() * colors.length)],
       speedY: Math.random() * 4 + 3,
-      speedX: Math.random() * 4 - 2,
-      rotation: Math.random() * 360,
-      rotSpeed: Math.random() * 8 - 4
+      speedX: Math.random() * 4 - 2
     });
   }
 
@@ -104,42 +115,40 @@ function launchConfetti(durationMs = 4000) {
 
   function animate() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    confettiParticles.forEach(p => {
+    for (let i = 0; i < confettiParticles.length; i++) {
+      const p = confettiParticles[i];
       p.y += p.speedY;
       p.x += p.speedX;
-      p.rotation += p.rotSpeed;
-
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate((p.rotation * Math.PI) / 180);
       ctx.fillStyle = p.color;
-      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
-      ctx.restore();
-    });
+      ctx.fillRect(p.x, p.y, p.size, p.size);
+    }
 
     if (Date.now() - startTime < durationMs) {
       confettiAnimationId = requestAnimationFrame(animate);
     } else {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       confettiParticles = [];
+      confettiAnimationId = null;
     }
   }
 
   animate();
 }
 
-// ============================================================================
-// OBS OVERLAY SYNC ENGINE (Host -> Server -> OBS Studio Browser Source)
-// ============================================================================
+// OBS Studio Synchronization Engine
+// Synchronizacja stanu przez HTTP POST/GET do FastAPI z throttlingiem (~200ms).
 function serializeGameState() {
+  // Set w JS serializuje sie do {}, Array.from() ratuje uczestnikow losowania
   const counts = { A: 0, B: 0, C: 0, D: 0 };
   state.quiz.answers.forEach((val) => {
     if (counts[val.answer] !== undefined) counts[val.answer]++;
   });
 
   const q = state.quiz.currentQuestion;
+  const exportedGame = (state.activeGame === 'leaderboard') ? (state.lastPlayableGame || 'quiz') : state.activeGame;
+
   return {
-    active_game: state.activeGame,
+    active_game: exportedGame,
     quiz: {
       question: q ? q.question : '',
       category: q ? (q.category || 'Ogólne') : 'Ogólne',
@@ -158,8 +167,11 @@ function serializeGameState() {
       prize: state.giveaway.prize,
       state: state.giveaway.isOpen ? 'open' : (state.giveaway.winner ? 'drawn' : 'idle'),
       participants_count: state.giveaway.participants.size,
+      participants: Array.from(state.giveaway.participants),
       winner: state.giveaway.winner,
-      is_rolling: state.giveaway.isRolling
+      is_rolling: state.giveaway.isRolling,
+      roll_trail: state.giveaway.rollTrail || [],
+      roll_hash: state.giveaway.lastRollHash || null
     },
     hangman: {
       word: state.hangman.word,
@@ -178,6 +190,7 @@ function serializeGameState() {
 }
 
 let syncDebounceTimer = null;
+let lastSyncSendTime = 0;
 async function pushStateToServer(immediate = false) {
   if (state.isOverlay) return; // Only host pushes state
 
@@ -185,11 +198,12 @@ async function pushStateToServer(immediate = false) {
   broadcastSync('STATE_SYNC', payload);
 
   const send = async () => {
+    lastSyncSendTime = Date.now();
     try {
       await fetch(`${API_BASE}/games/state`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(serializeGameState())
       });
     } catch (e) {}
   };
@@ -199,11 +213,16 @@ async function pushStateToServer(immediate = false) {
     syncDebounceTimer = null;
     await send();
   } else {
-    if (!syncDebounceTimer) {
+    const elapsed = Date.now() - lastSyncSendTime;
+    if (elapsed > 200) {
+      if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+      syncDebounceTimer = null;
+      await send();
+    } else if (!syncDebounceTimer) {
       syncDebounceTimer = setTimeout(() => {
         syncDebounceTimer = null;
         send();
-      }, 250);
+      }, Math.max(20, 200 - elapsed));
     }
   }
 }
@@ -225,7 +244,7 @@ function startOverlaySync() {
   }
 
   pollOverlayState();
-  setInterval(pollOverlayState, 350);
+  setInterval(pollOverlayState, 200);
 }
 
 function applyServerState(data) {
@@ -235,7 +254,7 @@ function applyServerState(data) {
   if (state.isOverlay) {
     const forcedGame = new URLSearchParams(window.location.search).get('game');
     if (!forcedGame || forcedGame === 'all' || forcedGame === 'auto') {
-      if (data.active_game && data.active_game !== state.activeGame) {
+      if (data.active_game && data.active_game !== 'leaderboard' && data.active_game !== state.activeGame) {
         switchGameMode(data.active_game, false);
       }
     }
@@ -276,18 +295,31 @@ function applyServerState(data) {
   if (data.giveaway) {
     const sg = data.giveaway;
     const prevWinner = state.giveaway.winner;
+    const prevRolling = state.giveaway.isRolling;
 
     state.giveaway.keyword = sg.keyword || '!losowanie';
     state.giveaway.prize = sg.prize || '';
     state.giveaway.isOpen = sg.state === 'open';
     state.giveaway.remoteCount = sg.participants_count || 0;
-    state.giveaway.winner = sg.winner;
+    if (sg.participants && Array.isArray(sg.participants)) {
+      state.giveaway.remoteParticipants = sg.participants;
+    }
     state.giveaway.isRolling = !!sg.is_rolling;
+    state.giveaway.winner = sg.winner;
+    state.giveaway.lastRollHash = sg.roll_hash || null;
+    state.giveaway.rollTrail = sg.roll_trail || [];
 
-    updateGiveawayUI();
-
-    if (state.isOverlay && sg.winner && sg.winner !== prevWinner) {
-      launchConfetti(4500);
+    if (state.isOverlay) {
+      if (state.giveaway.isRolling && !prevRolling) {
+        startOverlayRoulette(state.giveaway.rollTrail.length > 0 ? state.giveaway.rollTrail : (state.giveaway.remoteParticipants || []));
+      } else if (sg.winner && sg.winner !== prevWinner) {
+        finishOverlayRoulette(sg.winner);
+        launchConfetti(4500);
+      } else if (!state.giveaway.isRolling) {
+        updateGiveawayUI();
+      }
+    } else {
+      updateGiveawayUI();
     }
   }
 
@@ -311,9 +343,7 @@ function applyServerState(data) {
   }
 }
 
-// ============================================================================
-// INITIALIZATION
-// ============================================================================
+// Inicjalizacja aplikacji i kanalu synchronizacji
 window.addEventListener('DOMContentLoaded', async () => {
   // Setup BroadcastChannel for fast same-browser sync
   if ('BroadcastChannel' in window) {
@@ -327,8 +357,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Check Overlay Mode
   if (state.isOverlay) {
+    document.documentElement.classList.add('overlay-mode');
     document.body.classList.add('overlay-mode');
-    const initialGame = (state.targetGame && state.targetGame !== 'auto' && state.targetGame !== 'all') ? state.targetGame : 'quiz';
+    let initialGame = (state.targetGame && state.targetGame !== 'auto' && state.targetGame !== 'all') ? state.targetGame : 'quiz';
+    if (initialGame === 'leaderboard') initialGame = 'quiz';
     switchGameMode(initialGame, false);
     // Overlay polls server state and renders in real-time
     startOverlaySync();
@@ -355,7 +387,9 @@ function handleSyncMessage(msg) {
   if (msg.type === 'STATE_SYNC') {
     applyServerState(msg.payload);
   } else if (msg.type === 'SWITCH_MODE') {
-    switchGameMode(msg.mode, false);
+    if (!state.isOverlay || msg.mode !== 'leaderboard') {
+      switchGameMode(msg.mode, false);
+    }
   }
 }
 
@@ -389,10 +423,15 @@ async function initLatestMsgId() {
   } catch (e) {}
 }
 
-// ============================================================================
-// NAVIGATION & TABS
-// ============================================================================
+// Nawigacja miedzy grami
 function switchGameMode(mode, doBroadcast = true) {
+  if (state.isOverlay && mode === 'leaderboard') {
+    return;
+  }
+
+  if (mode !== 'leaderboard') {
+    state.lastPlayableGame = mode;
+  }
   state.activeGame = mode;
 
   document.querySelectorAll('.game-tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -410,13 +449,17 @@ function switchGameMode(mode, doBroadcast = true) {
   }
 
   if (doBroadcast) {
-    broadcastSync('SWITCH_MODE', mode);
+    // Nie rozglaszaj trybu leaderboard do overlayu w OBS
+    if (mode !== 'leaderboard') {
+      broadcastSync('SWITCH_MODE', mode);
+      if (!state.isOverlay) {
+        pushStateToServer(true);
+      }
+    }
   }
 }
 
-// ============================================================================
-// CHAT POLLING & REAL-TIME EVENT ENGINE
-// ============================================================================
+// Polling czatu Twitcha z bazy SQLite
 function startChatPolling() {
   if (state.pollTimer) clearInterval(state.pollTimer);
   state.pollTimer = setInterval(async () => {
@@ -433,7 +476,7 @@ function startChatPolling() {
         }
       }
     } catch (e) {}
-  }, 1000);
+  }, 500);
 }
 
 function processIncomingMessage(msg) {
@@ -457,9 +500,7 @@ function processIncomingMessage(msg) {
   }
 }
 
-// ============================================================================
-// QUIZ ENGINE (Własne pytania, ukryte procenty i głosy)
-// ============================================================================
+// Quiz Engine
 function loadSavedQuestions() {
   const saved = localStorage.getItem('tm_quiz_questions');
   if (saved) {
@@ -490,8 +531,11 @@ function loadQuizQuestion(index) {
   const q = state.quiz.questionList[state.quiz.currentIndex];
   state.quiz.currentQuestion = q;
   state.quiz.state = 'idle';
+  state.quiz.revealed = false;
   state.quiz.answers.clear();
   state.quiz.podium = [];
+  state.quiz.remoteDistribution = { A: 0, B: 0, C: 0, D: 0 };
+  state.quiz.remoteAnswersCount = 0;
 
   const log = document.getElementById('quiz-live-log');
   if (log) log.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem;">Rozpocznij rundę, aby zbierać głosy z czatu.</div>';
@@ -509,9 +553,9 @@ function renderQuizEmptyState() {
   const qDisplay = document.getElementById('quiz-question-display');
   if (qDisplay) {
     if (state.isOverlay) {
-      qDisplay.innerHTML = '<div style="padding: 1.5rem 0; color: var(--text-secondary);"><span style="font-size: 2.2rem; display: block; margin-bottom: 0.5rem;">📋</span><strong>Czekamy na pytanie streamerki...</strong></div>';
+      qDisplay.innerHTML = '<div style="padding: 1.5rem 0; color: var(--text-secondary);"><strong>Czekamy na pytanie streamerki...</strong></div>';
     } else {
-      qDisplay.innerText = 'Brak załadowanych pytań. Kliknij poniżej "Importuj Pytania (Wklej tekst)", aby dodać swój quiz!';
+      qDisplay.innerText = 'Brak załadowanych pytań. Kliknij poniżej "Importuj Pytania", aby dodać swój quiz.';
     }
   }
 
@@ -547,8 +591,11 @@ function startQuizRound() {
   }
 
   state.quiz.state = 'active';
+  state.quiz.revealed = false;
   state.quiz.answers.clear();
   state.quiz.podium = [];
+  state.quiz.remoteDistribution = { A: 0, B: 0, C: 0, D: 0 };
+  state.quiz.remoteAnswersCount = 0;
 
   const timeSelect = document.getElementById('select-quiz-time');
   const duration = parseInt(timeSelect ? timeSelect.value : '30', 10);
@@ -562,7 +609,7 @@ function startQuizRound() {
   pushStateToServer(true);
 
   playSuccessChime();
-  showToast('Głosowanie aktywne! Widzowie odpowiadają wpisując A, B, C lub D (wyniki są ukryte do końca rundy).', 'success');
+  showToast('Głosowanie aktywne! Widzowie odpowiadają wpisując A, B, C lub D.', 'success');
 
   if (state.quiz.timerInterval) clearInterval(state.quiz.timerInterval);
   if (duration > 0) {
@@ -604,14 +651,18 @@ function handleQuizMessage(username, text) {
   const counter = document.getElementById('quiz-votes-counter');
   if (counter) counter.innerText = state.quiz.answers.size;
 
+  // Immediately render updated votes on Host
+  renderQuizUI();
+
+  // Push state to OBS Overlay (throttled)
   pushStateToServer(false);
 
-  // Add to live incoming feed WITHOUT revealing which letter they chose!
+  // Add to live incoming feed
   const log = document.getElementById('quiz-live-log');
   if (log) {
     const entry = document.createElement('div');
     entry.className = 'log-entry';
-    entry.innerHTML = `<span><strong>@${username}</strong> oddał(a) głos</span><span style="color: var(--accent-emerald); font-weight: 700;">✅</span>`;
+    entry.innerHTML = `<span><strong>@${username}</strong> oddał(a) głos na <strong>${chosenKey}</strong></span><span style="color: var(--accent-emerald); font-weight: 700; font-size: 0.75rem;">Oddano</span>`;
     log.prepend(entry);
     if (log.children.length > 30) log.lastElementChild.remove();
   }
@@ -664,7 +715,7 @@ function renderQuizUI() {
   const currentNum = state.quiz.currentIndex + 1;
   if (catDisplay) {
     const indexPart = state.isOverlay ? '' : ` <span id="quiz-index-indicator">${currentNum} / ${total}</span>`;
-    catDisplay.innerHTML = `📋 ${q.category || 'Pytanie'}${indexPart}`;
+    catDisplay.innerHTML = `${q.category || 'Pytanie'}${indexPart}`;
   }
 
   const qText = document.getElementById('quiz-question-display');
@@ -686,6 +737,29 @@ function renderQuizUI() {
   const optionsGrid = document.getElementById('quiz-options-container');
   const podiumCard = document.getElementById('quiz-round-podium');
 
+  // Calculate or use remote distribution
+  let dist = state.quiz.remoteDistribution;
+  if (!state.isOverlay || !dist) {
+    dist = { A: 0, B: 0, C: 0, D: 0 };
+    state.quiz.answers.forEach((val) => {
+      if (dist[val.answer] !== undefined) dist[val.answer]++;
+    });
+  }
+
+  const totalVotes = Object.values(dist).reduce((a, b) => a + b, 0);
+
+  // Helper to update progress and counts on options
+  const updateOptionBars = () => {
+    ['A', 'B', 'C', 'D'].forEach(key => {
+      const countEl = document.getElementById(`opt-count-${key}`);
+      const progEl = document.getElementById(`opt-prog-${key}`);
+      const c = dist[key] || 0;
+      const pct = totalVotes > 0 ? Math.round((c / totalVotes) * 100) : 0;
+      if (countEl) countEl.innerText = `${c} odp. (${pct}%)`;
+      if (progEl) progEl.style.width = `${pct}%`;
+    });
+  };
+
   // Handle ACTIVE vs REVEALED vs IDLE visual states
   if (state.quiz.state === 'active') {
     if (optionsGrid) {
@@ -693,6 +767,10 @@ function renderQuizUI() {
       document.querySelectorAll('.option-card').forEach(c => c.classList.remove('correct', 'wrong'));
     }
     if (podiumCard) podiumCard.style.display = 'none';
+
+    // Show live voting stats in real time on both Host and Overlay!
+    updateOptionBars();
+
   } else if (state.quiz.state === 'revealed' || state.quiz.revealed) {
     if (optionsGrid) optionsGrid.classList.remove('voting-active');
 
@@ -708,24 +786,7 @@ function renderQuizUI() {
       }
     });
 
-    // Calculate or use remote distribution
-    let dist = state.quiz.remoteDistribution;
-    if (!state.isOverlay || !dist) {
-      dist = { A: 0, B: 0, C: 0, D: 0 };
-      state.quiz.answers.forEach((val) => {
-        if (dist[val.answer] !== undefined) dist[val.answer]++;
-      });
-    }
-
-    const totalVotes = Object.values(dist).reduce((a, b) => a + b, 0);
-    ['A', 'B', 'C', 'D'].forEach(key => {
-      const countEl = document.getElementById(`opt-count-${key}`);
-      const progEl = document.getElementById(`opt-prog-${key}`);
-      const c = dist[key] || 0;
-      const pct = totalVotes > 0 ? Math.round((c / totalVotes) * 100) : 0;
-      if (countEl) countEl.innerText = `${c} odp. (${pct}%)`;
-      if (progEl) progEl.style.width = `${pct}%`;
-    });
+    updateOptionBars();
 
     // Podium display
     const podiumItems = state.isOverlay ? (state.quiz.remotePodium || []) : state.quiz.podium;
@@ -739,8 +800,8 @@ function renderQuizUI() {
       if (podiumSub) podiumSub.innerText = `${podiumItems ? podiumItems.length : 0} poprawnych odpowiedzi (na ${votesCount} głosujących)`;
       if (podiumList && podiumItems) {
         podiumList.innerHTML = podiumItems.slice(0, 5).map((c, i) => `
-          <div style="background: rgba(0,0,0,0.35); padding: 0.4rem 0.85rem; border-radius: var(--radius-md); border: 1px solid rgba(16,185,129,0.3); font-size: 0.85rem; display: flex; align-items: center; gap: 0.4rem;">
-            <span>${i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : '🎖️'))}</span>
+          <div style="background: var(--twitch-base); padding: 0.35rem 0.75rem; border-radius: var(--radius-xs); border: 1px solid rgba(0,173,3,0.3); font-size: 0.825rem; display: flex; align-items: center; gap: 0.4rem;">
+            <span style="font-weight: 700; color: var(--accent-amber);">#${i + 1}</span>
             <strong>@${c.username || c.user}</strong>
             <span style="color: var(--accent-emerald); font-weight: 700;">+${c.points || 100} pkt</span>
           </div>
@@ -793,7 +854,15 @@ function updateQuizTimerUI() {
 // BULK IMPORT PARSER (Multi-line / Pipe / Semicolon / CSV)
 // -------------------------------------------------------------
 function openBulkImportModal() {
-  document.getElementById('modal-bulk-import').classList.add('active');
+  const bulkModal = document.getElementById('modal-bulk-import');
+  if (bulkModal) {
+    bulkModal.style.zIndex = '1200';
+    bulkModal.classList.add('active');
+    setTimeout(() => {
+      const ta = document.getElementById('textarea-bulk-import');
+      if (ta) ta.focus();
+    }, 50);
+  }
 }
 
 function insertExampleQuestions() {
@@ -806,6 +875,10 @@ Jaka jest stolica Australii? | Sydney | Melbourne | Canberra | Brisbane | C`;
   
   document.getElementById('textarea-bulk-import').value = example;
 }
+
+// -------------------------------------------------------------------------------------------
+// W NIEKTÓRYCH CZĘŚCIACH BARDZO CIĘŻKO BYŁO OGARNĄĆ TEN PIERDOLNIK POZDRAWIAM ~ Pszemuś
+// -------------------------------------------------------------------------------------------
 
 function processBulkImport() {
   const text = document.getElementById('textarea-bulk-import').value.trim();
@@ -846,6 +919,7 @@ function processBulkImport() {
   state.quiz.questionList = parsed;
   saveQuestions();
   closeModal('modal-bulk-import');
+  updateQuestionManagerUI();
   loadQuizQuestion(0);
   showToast(`Pomyślnie zaimportowano ${parsed.length} pytań!`, 'success');
 }
@@ -884,8 +958,8 @@ function updateQuestionManagerUI() {
             </div>
           </div>
           <div style="display: flex; gap: 0.5rem;">
-            <button class="btn btn-secondary btn-icon" onclick="jumpToQuizQuestion(${idx})" title="Załaduj na planszę">▶</button>
-            <button class="btn btn-danger btn-icon" onclick="deleteQuizQuestion(${idx})" title="Usuń pytanie">🗑️</button>
+            <button class="btn btn-secondary btn-icon" onclick="jumpToQuizQuestion(${idx})" title="Załaduj na planszę">Wybierz</button>
+            <button class="btn btn-danger btn-icon" onclick="deleteQuizQuestion(${idx})" title="Usuń pytanie">Usuń</button>
           </div>
         </div>
       `).join('');
@@ -936,9 +1010,7 @@ function clearAllQuestions() {
   }
 }
 
-// ============================================================================
-// MODULE 2: GIVEAWAY / LOSOWANIE (Słowo kluczowe & Losowanie usera)
-// ============================================================================
+// Giveaway Engine
 function openGiveawaySettingsModal() {
   document.getElementById('input-giveaway-keyword').value = state.giveaway.keyword;
   document.getElementById('input-giveaway-prize').value = state.giveaway.prize;
@@ -957,6 +1029,7 @@ function saveGiveawaySettings() {
   closeModal('modal-giveaway-settings');
   updateGiveawayUI();
   broadcastSync('GIVEAWAY_UPDATE', state.giveaway);
+  pushStateToServer(true);
   showToast(`Ustawiono słowo kluczowe: "${kw}"`, 'success');
 }
 
@@ -1006,10 +1079,10 @@ function updateGiveawayUI() {
   if (pill) {
     if (state.giveaway.isOpen) {
       pill.className = 'giveaway-status-badge open';
-      pill.innerText = '🟢 Zapisy Otwarte (Czat Dołącza)';
+      pill.innerText = 'Zapisy Otwarte (Czat Dołącza)';
     } else {
       pill.className = 'giveaway-status-badge closed';
-      pill.innerText = '🔴 Zapisy Zamknięte';
+      pill.innerText = 'Zapisy Zamknięte';
     }
   }
 
@@ -1034,6 +1107,11 @@ function updateGiveawayUI() {
       const count = state.isOverlay ? (state.giveaway.remoteCount || 0) : state.giveaway.participants.size;
       winnerDetails.innerText = `${prizeText}Wyłoniono spośród ${count} uczestników`;
     }
+    const csprngBadge = document.getElementById('giveaway-winner-csprng');
+    if (csprngBadge) {
+      csprngBadge.style.display = 'inline-block';
+      csprngBadge.innerText = state.giveaway.lastRollHash ? `Losowanie CSPRNG #${state.giveaway.lastRollHash}` : 'Losowanie CSPRNG';
+    }
     if (spinnerBox) spinnerBox.classList.remove('rolling');
     if (spinnerText) spinnerText.style.display = 'none';
     if (idleHint) idleHint.style.display = 'none';
@@ -1046,8 +1124,228 @@ function updateGiveawayUI() {
     if (winnerCard) winnerCard.style.display = 'none';
     if (spinnerBox) spinnerBox.classList.remove('rolling');
     if (spinnerText) spinnerText.style.display = 'none';
-    if (idleHint) idleHint.style.display = 'block';
+    if (idleHint) {
+      idleHint.style.display = 'block';
+      const kw = state.giveaway.keyword || '!losowanie';
+      const prize = state.giveaway.prize ? state.giveaway.prize.trim() : '';
+
+      if (state.isOverlay) {
+        if (state.giveaway.isOpen) {
+          idleHint.innerHTML = `
+            <div class="giveaway-overlay-hero">
+              ${prize ? `<div class="giveaway-overlay-prize-badge">Do wygrania: <strong>${escapeHtml(prize)}</strong></div>` : ''}
+              <div class="giveaway-overlay-inst">Wpisz na czacie:</div>
+              <div class="giveaway-overlay-kw-box">
+                <span class="giveaway-overlay-kw-text">${escapeHtml(kw)}</span>
+              </div>
+              <div class="giveaway-overlay-sub">aby dołączyć do losowania</div>
+            </div>
+          `;
+        } else {
+          idleHint.innerHTML = `
+            <div class="giveaway-overlay-hero">
+              ${prize ? `<div class="giveaway-overlay-prize-badge">Do wygrania: <strong>${escapeHtml(prize)}</strong></div>` : ''}
+              <div class="giveaway-overlay-inst">Słowo kluczowe:</div>
+              <div class="giveaway-overlay-kw-box closed">
+                <span class="giveaway-overlay-kw-text">${escapeHtml(kw)}</span>
+              </div>
+              <div class="giveaway-overlay-sub">Wpisz na czacie, gdy wystartują zapisy</div>
+            </div>
+          `;
+        }
+      } else {
+        if (state.giveaway.isOpen) {
+          idleHint.innerHTML = `
+            <div style="text-align: center; color: var(--text-secondary); padding: 0.5rem 0;">
+              <div style="font-size: 1.15rem; color: #fff; font-weight: 700; margin-bottom: 0.35rem;">
+                Zapisy na czacie są aktywne!
+              </div>
+              <div>Widzowie dołączają wpisując: <strong style="color: var(--accent-amber); font-size: 1.15rem;">${escapeHtml(kw)}</strong></div>
+              ${prize ? `<div style="font-size: 0.85rem; color: var(--accent-cyan); margin-top: 0.35rem;">Nagroda: <strong>${escapeHtml(prize)}</strong></div>` : ''}
+            </div>
+          `;
+        } else {
+          idleHint.innerHTML = `
+            <div style="text-align: center; color: var(--text-secondary); padding: 0.5rem 0;">
+              <div style="font-size: 1.05rem; color: #fff; font-weight: 600; margin-bottom: 0.35rem;">
+                Słowo kluczowe: <strong style="color: var(--accent-amber); font-size: 1.1rem;">${escapeHtml(kw)}</strong>
+              </div>
+              <div>Kliknij <strong>"Otwórz Zapisy na Czacie"</strong> poniżej, aby widzowie mogli dołączać.</div>
+              ${prize ? `<div style="font-size: 0.85rem; color: var(--accent-cyan); margin-top: 0.35rem;">Nagroda: <strong>${escapeHtml(prize)}</strong></div>` : ''}
+            </div>
+          `;
+        }
+      }
+    }
   }
+}
+
+// ============================================================================
+// CSPRNG CRYPTOGRAPHIC RANDOMNESS ENGINE & GIVEAWAY ROULETTE
+// Sprzetowa entropia Web Cryptography API, bezstronne probkowanie z odrzucaniem (rejection sampling),
+// wieloprzebiegowy Fisher-Yates shuffle oraz zsynchronizowana ruletka z krzywa zwolnienia.
+// ============================================================================
+
+/**
+ * Kryptograficznie bezpieczna liczba calkowita z zakresu [0, max - 1].
+ * Rejection sampling eliminuje blad modulo (modulo bias) do dokladnie 0.000000%.
+ */
+function getSecureRandomInt(max) {
+  if (max <= 1) return 0;
+  const limit = 0xFFFFFFFF - (0xFFFFFFFF % max);
+  const buffer = new Uint32Array(1);
+  let rand;
+  do {
+    window.crypto.getRandomValues(buffer);
+    rand = buffer[0];
+  } while (rand >= limit);
+  return rand % max;
+}
+
+/**
+ * Wieloprzebiegowy Fisher-Yates (Knuth) Cryptographic Shuffle.
+ * Maksymalna dyfuzja entropii i brak faworyzowania pozycji w tablicy.
+ */
+function secureShuffle(array) {
+  const arr = array.slice();
+  const passes = Math.max(2, Math.min(4, Math.ceil(30 / Math.max(1, arr.length))));
+  for (let pass = 0; pass < passes; pass++) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = getSecureRandomInt(i + 1);
+      const temp = arr[i];
+      arr[i] = arr[j];
+      arr[j] = temp;
+    }
+  }
+  return arr;
+}
+
+/**
+ * Generuje 8-znakowy skrot weryfikacyjny CSPRNG do historii i na karte zwyciezcy.
+ */
+function generateEntropyProof() {
+  const bytes = new Uint8Array(4);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+/**
+ * Tworzy sekwencje losowania (trail), ktora plynnie zwalnia i konczy sie na wylosowanym zwyciezcy.
+ */
+function buildRollTrail(entrants, winner, steps = 30) {
+  if (entrants.length <= 1) return [winner];
+  const trail = [];
+  for (let i = 0; i < steps - 1; i++) {
+    trail.push(entrants[getSecureRandomInt(entrants.length)]);
+  }
+  trail.push(winner);
+  return trail;
+}
+
+let hostRouletteCancel = null;
+let overlayRouletteCancel = null;
+
+/**
+ * Kinematyczny silnik ruletki ze stopniowym wyhamowywaniem (krzywa szescienna).
+ * Uzywany wspolnie przez panel Hosta i nakladke OBS Studio Browser Source.
+ */
+function runCinematicRoulette(trail, onStep, onFinish) {
+  if (!trail || trail.length === 0) {
+    if (onFinish) onFinish();
+    return () => {};
+  }
+
+  let index = 0;
+  let activeTimeout = null;
+  let isCancelled = false;
+  const total = trail.length;
+
+  function step() {
+    if (isCancelled) return;
+    if (index >= total) {
+      if (onFinish) onFinish();
+      return;
+    }
+
+    const name = trail[index];
+    if (onStep) onStep(name, index, total);
+
+    // Dynamiczna krzywa opoznienia od 40ms do ~550ms
+    const progress = index / Math.max(1, total - 1);
+    const delay = Math.round(40 + Math.pow(progress, 3.2) * 520);
+
+    index++;
+    if (index < total) {
+      activeTimeout = setTimeout(step, delay);
+    } else {
+      activeTimeout = setTimeout(() => {
+        if (!isCancelled && onFinish) onFinish();
+      }, 350);
+    }
+  }
+
+  step();
+
+  return () => {
+    isCancelled = true;
+    if (activeTimeout) clearTimeout(activeTimeout);
+  };
+}
+
+function startOverlayRoulette(trailOrPool) {
+  if (overlayRouletteCancel) {
+    overlayRouletteCancel();
+    overlayRouletteCancel = null;
+  }
+
+  const spinnerBox = document.getElementById('giveaway-spinner-container');
+  const spinnerText = document.getElementById('giveaway-spinner-text');
+  const idleHint = document.getElementById('giveaway-idle-hint');
+  const winnerCard = document.getElementById('giveaway-winner-card');
+
+  if (idleHint) idleHint.style.display = 'none';
+  if (winnerCard) winnerCard.style.display = 'none';
+  if (spinnerBox) spinnerBox.classList.add('rolling');
+  if (spinnerText) spinnerText.style.display = 'block';
+
+  let trail = (Array.isArray(trailOrPool) && trailOrPool.length > 0)
+    ? trailOrPool
+    : ['Czatujący', 'AktywnyWidz', 'Zwycięzca', 'TwitchViewer'];
+
+  if (trail.length < 15 && state.giveaway.remoteParticipants && state.giveaway.remoteParticipants.length > 0) {
+    trail = buildRollTrail(state.giveaway.remoteParticipants, state.giveaway.remoteParticipants[0], 25);
+  }
+
+  overlayRouletteCancel = runCinematicRoulette(
+    trail,
+    (name) => {
+      if (spinnerText) spinnerText.innerText = `@${name}`;
+    },
+    () => {
+      overlayRouletteCancel = null;
+      if (state.giveaway.winner) {
+        finishOverlayRoulette(state.giveaway.winner);
+      }
+    }
+  );
+}
+
+function finishOverlayRoulette(winner) {
+  if (overlayRouletteCancel) {
+    overlayRouletteCancel();
+    overlayRouletteCancel = null;
+  }
+  state.giveaway.isRolling = false;
+  state.giveaway.winner = winner;
+
+  const spinnerText = document.getElementById('giveaway-spinner-text');
+  if (spinnerText) {
+    spinnerText.innerText = `@${winner}`;
+  }
+
+  setTimeout(() => {
+    updateGiveawayUI();
+  }, 250);
 }
 
 function updateGiveawayParticipantsUI() {
@@ -1069,24 +1367,48 @@ function updateGiveawayParticipantsUI() {
             <span class="rank-badge">${i + 1}</span>
             <span class="leader-name">@${u}</span>
           </div>
-          <span style="font-size: 0.75rem; color: var(--accent-emerald);">Zapisany ✓</span>
+          <span style="font-size: 0.75rem; color: var(--accent-emerald); font-weight: 600;">Zapisany</span>
         </div>
       `).join('');
     }
   }
 }
 
-function rollGiveawayWinner() {
-  const entrants = Array.from(state.giveaway.participants);
-  if (entrants.length === 0) {
+function rollGiveawayWinner(isReroll = false) {
+  const allEntrants = Array.from(state.giveaway.participants);
+  if (allEntrants.length === 0) {
     showToast('Brak uczestników do losowania! Otwórz najpierw zapisy.', 'warning');
     return;
   }
 
-  // Close registration automatically before drawing
+  // Smart Anti-Repeat: Na rerollu wykluczamy poprzedniego gracza (jesli bylo >1 chetnych)
+  let candidatePool = allEntrants;
+  if (isReroll && allEntrants.length > 1 && state.giveaway.winner) {
+    const prevWinnerLower = state.giveaway.winner.toLowerCase();
+    const filtered = allEntrants.filter(u => u.toLowerCase() !== prevWinnerLower);
+    if (filtered.length > 0) candidatePool = filtered;
+  }
+
+  // 1. Wieloprzebiegowy CSPRNG shuffle
+  const shuffled = secureShuffle(candidatePool);
+
+  // 2. Bezstronne probkowanie z odrzucaniem
+  const winnerIndex = getSecureRandomInt(shuffled.length);
+  const chosenWinner = shuffled[winnerIndex];
+
+  // 3. Generowanie skrotu weryfikacyjnego CSPRNG
+  const proofHash = generateEntropyProof();
+  state.giveaway.lastRollHash = proofHash;
+
+  // 4. Budowa zsynchronizowanej sekwencji ruletki
+  const trail = buildRollTrail(allEntrants, chosenWinner, 30);
+  state.giveaway.rollTrail = trail;
+
+  // Zamkniecie zapisow i aktywacja stanu losowania
   state.giveaway.isOpen = false;
   state.giveaway.isRolling = true;
   state.giveaway.winner = null;
+
   updateGiveawayUI();
   pushStateToServer(true);
 
@@ -1100,29 +1422,21 @@ function rollGiveawayWinner() {
   if (spinnerText) spinnerText.style.display = 'block';
   if (spinnerBox) spinnerBox.classList.add('rolling');
 
-  // Animated Roulette Spinner with decelerating interval
-  let speed = 50;
-  let elapsed = 0;
-  const totalDuration = 3200; // 3.2 seconds roll
-
-  function spinStep() {
-    const randomPick = entrants[Math.floor(Math.random() * entrants.length)];
-    if (spinnerText) spinnerText.innerText = `@${randomPick}`;
-    playTickSound(700 + Math.random() * 400);
-
-    elapsed += speed;
-    speed += 15; // Deceleration curve
-
-    if (elapsed < totalDuration) {
-      setTimeout(spinStep, speed);
-    } else {
-      // Pick Final Winner!
-      const finalWinner = entrants[Math.floor(Math.random() * entrants.length)];
-      finishGiveawayRoll(finalWinner);
-    }
+  if (hostRouletteCancel) {
+    hostRouletteCancel();
+    hostRouletteCancel = null;
   }
 
-  spinStep();
+  hostRouletteCancel = runCinematicRoulette(
+    trail,
+    (name) => {
+      if (spinnerText) spinnerText.innerText = `@${name}`;
+    },
+    () => {
+      hostRouletteCancel = null;
+      finishGiveawayRoll(chosenWinner);
+    }
+  );
 }
 
 function finishGiveawayRoll(winner) {
@@ -1131,17 +1445,17 @@ function finishGiveawayRoll(winner) {
 
   updateGiveawayUI();
 
-  // Add to session history
+  // Zapis do historii biezacej sesji
   state.giveaway.history.unshift({
     winner,
     time: new Date().toLocaleTimeString(),
-    entrants: state.giveaway.participants.size
+    entrants: state.giveaway.participants.size,
+    hash: state.giveaway.lastRollHash
   });
   updateGiveawayHistoryUI();
 
-  playFanfare();
-  launchConfetti(4500);
-  showToast(`🎉 ZWYCIĘZCA: @${winner}! Gratulacje!`, 'success');
+  launchConfetti(2500);
+  showToast(`Wylosowano: @${winner}! (CSPRNG #${state.giveaway.lastRollHash})`, 'success');
   pushStateToServer(true);
 }
 
@@ -1157,10 +1471,10 @@ function updateGiveawayHistoryUI() {
   container.innerHTML = state.giveaway.history.map(h => `
     <div class="leader-item rank-1">
       <div class="leader-left">
-        <span style="font-size: 1.1rem;">👑</span>
+        <span class="rank-badge">1</span>
         <span class="leader-name">@${h.winner}</span>
       </div>
-      <span style="font-size: 0.75rem; color: var(--text-muted);">${h.time} (${h.entrants} os.)</span>
+      <span style="font-size: 0.75rem; color: var(--text-muted);">${h.time} (${h.entrants} os.) ${h.hash ? '• #' + h.hash : ''}</span>
     </div>
   `).join('');
 }
@@ -1169,6 +1483,8 @@ function clearGiveawayParticipants() {
   if (confirm("Czy na pewno chcesz wyczyścić listę zapisanych osób?")) {
     state.giveaway.participants.clear();
     state.giveaway.winner = null;
+    state.giveaway.lastRollHash = null;
+    state.giveaway.rollTrail = [];
 
     const winnerCard = document.getElementById('giveaway-winner-card');
     const idleHint = document.getElementById('giveaway-idle-hint');
@@ -1181,9 +1497,7 @@ function clearGiveawayParticipants() {
   }
 }
 
-// ============================================================================
-// MODULE 3: WISIELEC / ZGADYWANKA ("CHATTER")
-// ============================================================================
+// Hangman Engine
 function setupHangmanWord(word, category = 'Gry Komputerowe', hint = '') {
   state.hangman.word = word.toUpperCase().trim();
   state.hangman.category = category;
@@ -1212,17 +1526,17 @@ function renderHangmanUI() {
   const catDisplay = document.getElementById('hangman-category-display');
   const hintDisplay = document.getElementById('hangman-hint-display');
   if (catDisplay) catDisplay.innerText = state.hangman.category;
-  if (hintDisplay) hintDisplay.innerText = state.hangman.hint ? `💡 Podpowiedź: ${state.hangman.hint}` : '';
+  if (hintDisplay) hintDisplay.innerText = state.hangman.hint ? `Podpowiedź: ${state.hangman.hint}` : '';
 
   for (let i = 1; i <= state.hangman.maxLives; i++) {
     const heart = document.getElementById(`heart-${i}`);
     if (heart) {
       if (i <= state.hangman.livesLeft) {
-        heart.classList.remove('lost');
-        heart.innerText = '❤️';
+        heart.className = 'life-pip active';
+        heart.innerText = '';
       } else {
-        heart.classList.add('lost');
-        heart.innerText = '💔';
+        heart.className = 'life-pip lost';
+        heart.innerText = '';
       }
     }
   }
@@ -1235,7 +1549,7 @@ function renderHangmanUI() {
     board.innerHTML = '';
     const words = state.hangman.word.split(' ');
 
-    words.forEach((w, wIdx) => {
+    words.forEach((w) => {
       const segment = document.createElement('div');
       segment.className = 'word-segment';
 
@@ -1249,12 +1563,6 @@ function renderHangmanUI() {
       }
 
       board.appendChild(segment);
-
-      if (wIdx < words.length - 1) {
-        const spaceTile = document.createElement('div');
-        spaceTile.className = 'letter-tile space';
-        board.appendChild(spaceTile);
-      }
     });
   }
 
@@ -1266,6 +1574,46 @@ function renderHangmanUI() {
       wrongContainer.innerHTML = Array.from(state.hangman.wrongLetters).map(ch => `
         <span class="wrong-letter-chip">${ch}</span>
       `).join('');
+    }
+  }
+
+  // Active Chatter Banner & Win/Loss Status Display
+  const avatar = document.getElementById('chatter-avatar-initial');
+  const nameDisplay = document.getElementById('chatter-name-display');
+  const subHint = document.getElementById('chatter-sub-hint');
+  const timerCircle = document.getElementById('chatter-turn-timer');
+  const chatterBanner = document.getElementById('hangman-chatter-banner');
+
+  if (chatterBanner) chatterBanner.style.display = 'flex';
+
+  if (state.hangman.state === 'won') {
+    if (nameDisplay) nameDisplay.innerHTML = `<span style="color: var(--accent-emerald); font-weight: 700;">HASŁO ODGADNIĘTE!</span>`;
+    if (subHint) subHint.innerText = `Prawidłowe hasło: "${state.hangman.word}"`;
+    if (avatar) avatar.innerText = '✓';
+    if (timerCircle) timerCircle.innerText = 'GG';
+  } else if (state.hangman.state === 'lost') {
+    if (nameDisplay) nameDisplay.innerHTML = `<span style="color: var(--accent-red); font-weight: 700;">KONIEC SZANS!</span>`;
+    if (subHint) subHint.innerText = `Prawidłowe hasło to: "${state.hangman.word}"`;
+    if (avatar) avatar.innerText = '✕';
+    if (timerCircle) timerCircle.innerText = '0';
+  } else {
+    if (state.hangman.turnMode === 'chatter') {
+      const activeUser = state.hangman.activeChatter;
+      if (activeUser) {
+        if (nameDisplay) nameDisplay.innerText = `@${activeUser}`;
+        if (avatar) avatar.innerText = activeUser.charAt(0).toUpperCase();
+        if (subHint) subHint.innerText = 'Wpisz literkę lub całe hasło na czacie!';
+      } else {
+        if (nameDisplay) nameDisplay.innerText = state.isOverlay ? 'Oczekiwanie na gracza...' : 'Kliknij poniżej "Wylosuj Chatera"';
+        if (avatar) avatar.innerText = '?';
+        if (subHint) subHint.innerText = 'System wylosuje aktywnego chatera z ostatnich 1-2 minut.';
+      }
+      if (timerCircle) timerCircle.innerText = state.hangman.turnTimer !== undefined ? state.hangman.turnTimer : '45';
+    } else {
+      if (nameDisplay) nameDisplay.innerText = 'Czat Zgaduje Razem';
+      if (avatar) avatar.innerText = '*';
+      if (subHint) subHint.innerText = 'Każdy widz na czacie może podać literkę lub całe hasło!';
+      if (timerCircle) timerCircle.innerText = `${state.hangman.livesLeft}`;
     }
   }
 }
@@ -1290,12 +1638,12 @@ function renderActiveChattersSidebar(isFallback = false) {
     return;
   }
 
-  const note = isFallback ? '<div style="font-size: 0.75rem; color: var(--accent-amber); padding: 0.35rem; margin-bottom: 0.4rem;">⚠️ Tryb offline: Ostatni czatujący w bazie</div>' : '';
+  const note = isFallback ? '<div style="font-size: 0.75rem; color: var(--accent-amber); padding: 0.35rem; margin-bottom: 0.4rem;">Tryb offline: Ostatni czatujący w bazie</div>' : '';
 
   container.innerHTML = note + state.activeChatters.map(c => `
     <div class="leader-item" style="cursor: pointer;" onclick="assignTurnToChatter('${c.username}')" title="Kliknij, aby przekazać turę">
       <div class="leader-left">
-        <span class="rank-badge" style="background: rgba(145, 70, 255, 0.2); color: var(--twitch-purple-light);">💬</span>
+        <span class="rank-badge" style="background: rgba(145, 70, 255, 0.2); color: var(--twitch-purple-light); font-size: 0.7rem;">CHAT</span>
         <span class="leader-name">@${c.username}</span>
       </div>
       <span class="leader-score" style="font-size: 0.75rem; color: var(--text-muted);">${c.msg_count} wiad.</span>
@@ -1361,7 +1709,7 @@ function assignTurnToChatter(username) {
     }
   }, 1000);
 
-  showToast(`🎲 Tura chatera: @${username}! Czekam na literkę na czacie...`, 'info');
+  showToast(`Tura chatera: @${username}! Czekam na literkę na czacie...`, 'info');
   pushStateToServer(true);
 }
 
@@ -1383,10 +1731,10 @@ function updateTurnModeUI() {
   const banner = document.getElementById('hangman-chatter-banner');
 
   if (state.hangman.turnMode === 'chatter') {
-    if (btn) btn.innerText = '👤 Tryb: Chatter';
+    if (btn) btn.innerText = 'Tryb: Chatter';
     if (banner) banner.style.display = 'flex';
   } else {
-    if (btn) btn.innerText = '👥 Tryb: Czat Razem';
+    if (btn) btn.innerText = 'Tryb: Czat Razem';
     if (banner) banner.style.display = 'none';
   }
 }
@@ -1408,8 +1756,8 @@ function handleHangmanMessage(username, text) {
     addPointsToUser(username, 500, false, true);
 
     playFanfare();
-    launchConfetti(4500);
-    showToast(`🎉 NIESAMOWITE! @${username} odgadł(a) całe hasło: "${state.hangman.word}"! (+500 pkt)`, 'success');
+    launchConfetti(1500);
+    showToast(`Trafienie! @${username} odgadł(a) całe hasło: "${state.hangman.word}"! (+500 pkt)`, 'success');
     state.hangman.state = 'won';
     pushStateToServer(true);
     return;
@@ -1427,7 +1775,7 @@ function handleHangmanMessage(username, text) {
     state.hangman.revealedLetters.add(guess);
     addPointsToUser(username, 100, false, true);
     playSuccessChime();
-    showToast(`✅ Trafienie! @${username} odsłonił(a) literę "${guess}"! (+100 pkt)`, 'success');
+    showToast(`Trafienie! @${username} odsłonił(a) literę "${guess}"! (+100 pkt)`, 'success');
 
     renderHangmanUI();
 
@@ -1442,21 +1790,21 @@ function handleHangmanMessage(username, text) {
     if (allRevealed) {
       state.hangman.state = 'won';
       playFanfare();
-      launchConfetti(4500);
-      showToast(`🏆 Brawo! Całe hasło zostało odgadnięte: "${state.hangman.word}"!`, 'success');
+      launchConfetti(1500);
+      showToast(`Brawo! Całe hasło zostało odgadnięte: "${state.hangman.word}"!`, 'success');
     }
   } else {
     state.hangman.wrongLetters.add(guess);
     state.hangman.livesLeft = Math.max(0, state.hangman.livesLeft - 1);
     playErrorBuzzer();
-    showToast(`❌ Pudło! Litery "${guess}" nie ma w haśle! (-1 życie)`, 'error');
+    showToast(`Pudło! Litery "${guess}" nie ma w haśle! (-1 życie)`, 'error');
 
     renderHangmanUI();
 
     if (state.hangman.livesLeft <= 0) {
       state.hangman.state = 'lost';
       revealHangmanWord();
-      showToast(`💀 Koniec szans! Prawidłowe hasło to: "${state.hangman.word}"`, 'error');
+      showToast(`Koniec szans! Prawidłowe hasło to: "${state.hangman.word}"`, 'error');
     } else {
       if (state.hangman.turnMode === 'chatter') {
         setTimeout(() => rollActiveChatter(), 1200);
@@ -1492,9 +1840,7 @@ function applyCustomWord() {
   setupHangmanWord(word, cat, hint);
 }
 
-// ============================================================================
-// GLOBAL SESSION LEADERBOARD & EXCEL/CSV EXPORT
-// ============================================================================
+// Leaderboard & CSV Export
 function addPointsToUser(username, points, isQuiz = false, isHangman = false) {
   const norm = username.toLowerCase();
   const entry = state.leaderboard.get(norm) || {
@@ -1602,9 +1948,7 @@ async function exportQuizCSV() {
   }
 }
 
-// ============================================================================
-// OBS OVERLAY UTILS & MODALS
-// ============================================================================
+// OBS Modals & URL Generator
 function openOBSModal() {
   updateOBSUrls();
   document.getElementById('modal-obs').classList.add('active');
@@ -1657,20 +2001,18 @@ function showToast(message, type = 'info') {
   if (!container) return;
 
   const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.innerHTML = `<span>${type === 'error' ? '⚠️' : (type === 'success' ? '✅' : 'ℹ️')}</span><span>${message}</span>`;
+  toast.className = `toast-message`;
+  toast.innerHTML = `<span class="toast-dot ${type}"></span><span>${message}</span>`;
   container.appendChild(toast);
 
   setTimeout(() => {
     toast.style.opacity = '0';
     toast.style.transform = 'translateY(10px)';
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
+    setTimeout(() => toast.remove(), 200);
+  }, 3500);
 }
 
-// ============================================================================
-// LOCAL CHAT SIMULATOR (Dla testów na localhost)
-// ============================================================================
+// Simulator czatu do testow lokalnych bez odpalania Twitcha
 function openSimModal() {
   document.getElementById('modal-sim').classList.add('active');
 }

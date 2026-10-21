@@ -1,9 +1,7 @@
-/**
- * TwitchMetrics - Frontend Application Logic
- * Vanilla JavaScript & Chart.js Integration
- */
+// AkiirieStats Streamer Dashboard
+// Sraken pierdaken jak to nie będzie działać to przeprowadzam się do lasu :>
+// https://www.youtube.com/watch?v=NjOEdJ78eYM :oh:
 
-// Global App State
 const state = {
   lang: localStorage.getItem('tm_lang') || 'PL',
   activeTab: 'overall',
@@ -11,7 +9,7 @@ const state = {
   startDate: null,
   endDate: null,
   hideStaff: localStorage.getItem('tm_hide_staff') === 'true',
-  hideViewers: localStorage.getItem('tm_hide_viewers') !== 'false', // Default is TRUE (streamer safe mode)
+  hideViewers: localStorage.getItem('tm_hide_viewers') !== 'false', // Streamer safe mode
   authRequired: false,
   authPassword: localStorage.getItem('tm_auth_pwd') || '',
   selectedUser: null,
@@ -21,8 +19,15 @@ const state = {
   charts: {}
 };
 
-// API Base URL (uses /api on web server, or http://localhost:8000/api when opened directly as file://)
 const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000/api' : '/api';
+
+if (window.Chart) {
+  Chart.defaults.font.family = "'Montserrat', sans-serif";
+  Chart.defaults.color = "#adadb8";
+  Chart.defaults.animation = false;
+  Chart.defaults.responsive = true;
+  Chart.defaults.maintainAspectRatio = false;
+}
 
 // Multilingual Dictionary
 const I18N = {
@@ -30,7 +35,7 @@ const I18N = {
     tab_overall: "Ogólne Statystyki",
     tab_user: "Śledzenie Widza",
     tab_streams: "Historia Streamów",
-    tab_status: "Status & Wdrożenie",
+    tab_status: "Status Serwera",
     preset_today: "Dziś",
     preset_7d: "7 Dni",
     preset_30d: "30 Dni",
@@ -74,7 +79,7 @@ const I18N = {
     u_loyalty: "Wskaźnik Lojalności",
     u_chart_title: "Aktywność Widza w Czasie",
     u_feed_title: "Ostatnie Wiadomości",
-    u_search_placeholder: "🔍 Wpisz nick widza powyżej lub kliknij na nick w tabeli Najaktywniejszych, aby sprawdzić profil.",
+    u_search_placeholder: "Wpisz nick widza powyżej lub kliknij na nick w tabeli Najaktywniejszych, aby sprawdzić profil.",
     streams_archive_title: "Zarejestrowane Streamy",
     streams_archive_sub: "Wybierz sesję streama, aby zobaczyć szczegółową analizę oglądalności i hype'u",
     s_peak_viewers: "Max Widzów (Peak)",
@@ -109,6 +114,7 @@ const I18N = {
     badge_mod: "MOD",
     badge_vip: "VIP",
     badge_sub: "SUB",
+    badge_viewer: "Widz",
     chart_msgs: "Wiadomości",
     chart_unique: "Unikalni Czatujący",
     chart_viewers: "Widzowie",
@@ -117,8 +123,8 @@ const I18N = {
     attended_text: "Obecność na {0}/{1} streamach",
     live_badge: "NA ŻYWO",
     offline_badge: "OFFLINE",
-    hide_viewers: "Ukryj widzów 🙈",
-    hidden_badge: "🙈 Ukryte",
+    hide_viewers: "Ukryj widzów",
+    hidden_badge: "Ukryte",
     s_viewers_hidden_chart: "Wykres oglądalności jest ukryty (Tryb bezpieczny streamerki).",
     s_viewers_hidden_hint: "Możesz go odkryć przełącznikiem u góry strony.",
     s_ratio_hidden_chart: "Proporcja widzów ukryta."
@@ -127,7 +133,7 @@ const I18N = {
     tab_overall: "Overall Stats",
     tab_user: "User Tracking",
     tab_streams: "Stream Archive",
-    tab_status: "Status & Deployment",
+    tab_status: "Server Status",
     preset_today: "Today",
     preset_7d: "7 Days",
     preset_30d: "30 Days",
@@ -171,7 +177,7 @@ const I18N = {
     u_loyalty: "Loyalty Score",
     u_chart_title: "User Activity Over Time",
     u_feed_title: "Recent Messages",
-    u_search_placeholder: "🔍 Type a username above or click on any name in the leaderboard to inspect.",
+    u_search_placeholder: "Type a username above or click on any name in the leaderboard to inspect.",
     streams_archive_title: "Recorded Streams",
     streams_archive_sub: "Select a stream session to inspect viewership and hype analytics",
     s_peak_viewers: "Peak Viewers",
@@ -184,9 +190,9 @@ const I18N = {
     s_chatters_sub: "Active chatters",
     s_lurkers: "Estimated Lurkers",
     s_lurkers_sub: "Avg viewers without chatting",
-    s_hype: "Peak Hype Moment",
+    s_hype: "Peak Activity Moment",
     s_viewers_curve: "Viewership Curve Over Time",
-    s_viewers_curve_sub: "Viewer count every 2 minutes",
+    s_viewers_curve_sub: "Viewer count during session",
     s_chatter_ratio: "Chatters vs Lurkers",
     s_chatter_ratio_sub: "Engagement breakdown",
     s_words_title: "Top Words & Emotes",
@@ -206,6 +212,7 @@ const I18N = {
     badge_mod: "MOD",
     badge_vip: "VIP",
     badge_sub: "SUB",
+    badge_viewer: "Viewer",
     chart_msgs: "Messages",
     chart_unique: "Unique Chatters",
     chart_viewers: "Viewers",
@@ -214,8 +221,8 @@ const I18N = {
     attended_text: "Present at {0}/{1} streams",
     live_badge: "LIVE",
     offline_badge: "OFFLINE",
-    hide_viewers: "Hide Viewers 🙈",
-    hidden_badge: "🙈 Hidden",
+    hide_viewers: "Hide Viewers",
+    hidden_badge: "Hidden",
     s_viewers_hidden_chart: "Viewership curve is hidden (Streamer safe mode).",
     s_viewers_hidden_hint: "You can reveal it using the toggle at the top.",
     s_ratio_hidden_chart: "Viewers ratio hidden."
@@ -257,15 +264,16 @@ async function fetchAPI(endpoint, options = {}) {
 // Toast Notifications
 function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
+  if (!container) return;
   const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.innerHTML = `<span>${type === 'error' ? '⚠️' : '✅'}</span><span>${message}</span>`;
+  toast.className = `toast-message`;
+  toast.innerHTML = `<span class="toast-dot ${type}"></span><span>${message}</span>`;
   container.appendChild(toast);
   setTimeout(() => {
     toast.style.opacity = '0';
     toast.style.transform = 'translateY(10px)';
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
+    setTimeout(() => toast.remove(), 200);
+  }, 3500);
 }
 
 // Date Range Calculation in Local Timezone
@@ -568,8 +576,8 @@ function renderTimelineChart(timeline) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: '#A1A1AA', font: { family: 'Inter', size: 12 } } },
-        tooltip: { backgroundColor: '#18181b', borderColor: '#27272a', borderWidth: 1, titleFont: { family: 'Outfit', size: 14 } }
+        legend: { labels: { color: '#A1A1AA', font: { family: 'Montserrat', size: 12 } } },
+        tooltip: { backgroundColor: '#18181b', borderColor: '#2e2e35', borderWidth: 1, titleFont: { family: 'Fredoka', size: 14 }, bodyFont: { family: 'Montserrat', size: 12 } }
       },
       scales: {
         x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#71717A', maxTicksLimit: 12 } },
@@ -613,6 +621,13 @@ function renderHourlyChart(hourly) {
   });
 }
 
+// Official Twitch-Style SVG Vector Badges
+const BADGE_ICONS = {
+  mod: '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 3px; vertical-align: -1px;"><path d="M14.828 2.343a4 4 0 0 1 5.657 0l1.172 1.172a4 4 0 0 1 0 5.657L10.243 20.6a1 1 0 0 1-.707.293H5.414a1 1 0 0 1-.707-.293l-2.414-2.414a1 1 0 0 1 0-1.414l12.535-14.43zm-2.828 7.071l-7.071 7.071 1.414 1.414 7.071-7.071-1.414-1.414z"/></svg>',
+  vip: '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 3px; vertical-align: -1px;"><path d="M12 2l9 7.5-3.5 12.5H6.5L3 9.5 12 2z"/></svg>',
+  sub: '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 3px; vertical-align: -1px;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>'
+};
+
 function renderTopUsersTable(topUsers) {
   const tbody = document.getElementById('top-users-tbody');
   if (!topUsers.length) {
@@ -627,9 +642,10 @@ function renderTopUsersTable(topUsers) {
     else if (idx === 2) rankClass = 'rank-3';
 
     let badges = '';
-    if (u.is_mod) badges += `<span class="role-badge role-mod">${t('badge_mod')}</span>`;
-    if (u.is_vip) badges += `<span class="role-badge role-vip">${t('badge_vip')}</span>`;
-    if (u.is_sub) badges += `<span class="role-badge role-sub">${t('badge_sub')}</span>`;
+    if (u.is_mod) badges += `<span class="role-badge role-mod">${BADGE_ICONS.mod}${t('badge_mod')}</span>`;
+    if (u.is_vip) badges += `<span class="role-badge role-vip">${BADGE_ICONS.vip}${t('badge_vip')}</span>`;
+    if (u.is_sub) badges += `<span class="role-badge role-sub">${BADGE_ICONS.sub}${t('badge_sub')}</span>`;
+    if (!badges) badges = `<span class="role-badge role-viewer">${t('badge_viewer')}</span>`;
 
     return `
       <tr>
@@ -637,18 +653,18 @@ function renderTopUsersTable(topUsers) {
         <td>
           <a class="chatter-link" onclick="openUserProfile('${u.username}')">${u.username}</a>
         </td>
-        <td>${badges || '<span style="color: var(--text-muted); font-size: 0.75rem;">-</span>'}</td>
+        <td>${badges}</td>
         <td>
           <strong>${u.count.toLocaleString()}</strong>
           <div class="progress-bar-bg">
             <div class="progress-bar-fill" style="width: ${Math.min(100, u.percentage * 4)}%;"></div>
           </div>
         </td>
-        <td>${u.active_days} dni</td>
+        <td>${u.active_days} ${state.lang === 'PL' ? 'dni' : 'days'}</td>
         <td><span style="font-family: monospace; font-size: 0.85rem;">${u.percentage}%</span></td>
         <td style="text-align: right;">
           <button class="btn btn-secondary" style="padding: 0.3rem 0.65rem; font-size: 0.75rem;" onclick="openUserProfile('${u.username}')">
-            👤 ${t('th_action')}
+            ${t('th_action')}
           </button>
         </td>
       </tr>
@@ -695,9 +711,10 @@ async function loadUserData(username) {
     document.getElementById('u-name').innerText = username;
     
     let badges = '';
-    if (data.badges?.is_mod) badges += `<span class="role-badge role-mod">${t('badge_mod')}</span>`;
-    if (data.badges?.is_vip) badges += `<span class="role-badge role-vip">${t('badge_vip')}</span>`;
-    if (data.badges?.is_sub) badges += `<span class="role-badge role-sub">${t('badge_sub')}</span>`;
+    if (data.badges?.is_mod) badges += `<span class="role-badge role-mod">${BADGE_ICONS.mod}${t('badge_mod')}</span>`;
+    if (data.badges?.is_vip) badges += `<span class="role-badge role-vip">${BADGE_ICONS.vip}${t('badge_vip')}</span>`;
+    if (data.badges?.is_sub) badges += `<span class="role-badge role-sub">${BADGE_ICONS.sub}${t('badge_sub')}</span>`;
+    if (!badges) badges = `<span class="role-badge role-viewer">${t('badge_viewer')}</span>`;
     document.getElementById('u-badges-container').innerHTML = badges;
 
     document.getElementById('u-first-seen').innerText = data.first_seen || '-';
@@ -764,10 +781,10 @@ function renderUserMessagesFeed(messages) {
   feed.innerHTML = messages.map(m => `
     <div class="message-item">
       <div class="message-meta">
-        <span>🕒 ${m.created_at}</span>
-        ${m.stream_id ? `<span>Stream #${m.stream_id}</span>` : ''}
+        <span class="msg-time">${m.created_at}</span>
+        ${m.stream_id ? `<span class="msg-time">Stream #${m.stream_id}</span>` : ''}
       </div>
-      <div class="message-text">${escapeHTML(m.content)}</div>
+      <div class="msg-text">${escapeHTML(m.content)}</div>
     </div>
   `).join('');
 }
@@ -834,7 +851,7 @@ async function selectStream(streamId) {
     else liveBadge.style.display = 'none';
 
     document.getElementById('stream-detail-time').innerText = `${s.start_time} — ${s.end_time || t('live_badge')}`;
-    document.getElementById('stream-detail-duration').innerText = `⏱️ ${s.duration_formatted}`;
+    document.getElementById('stream-detail-duration').innerText = `${s.duration_formatted}`;
 
     // 6 KPI Cards
     if (state.hideViewers) {
@@ -952,7 +969,7 @@ function renderStreamRatioChart(chatters, lurkers) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'bottom', labels: { color: '#A1A1AA', font: { family: 'Inter' } } }
+        legend: { position: 'bottom', labels: { color: '#A1A1AA', font: { family: 'Montserrat' } } }
       },
       cutout: '68%'
     }
@@ -1158,3 +1175,5 @@ function escapeHTML(str) {
     '"': '&quot;'
   }[tag] || tag));
 }
+
+// A tak na poważnie to jakoś się tam dało coś z tego ukleić (jeżeli to serio teraz będzie dobrze działać)
