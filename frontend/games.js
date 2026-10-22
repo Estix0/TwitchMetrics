@@ -683,6 +683,10 @@ async function saveQuestions() {
 }
 
 function loadQuizQuestion(index) {
+  if (state.quiz.timerInterval) {
+    clearInterval(state.quiz.timerInterval);
+    state.quiz.timerInterval = null;
+  }
   if (!state.quiz.questionList || state.quiz.questionList.length === 0) {
     renderQuizEmptyState();
     pushStateToServer(true);
@@ -704,6 +708,9 @@ function loadQuizQuestion(index) {
   state.quiz.timerMax = duration;
   state.quiz.timerVal = duration;
 
+  // Clear any leftover correct / wrong highlighting from previous round immediately
+  document.querySelectorAll('.option-card').forEach(c => c.classList.remove('correct', 'wrong'));
+
   const log = document.getElementById('quiz-live-log');
   if (log) log.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 1rem;">Rozpocznij rundę, aby zbierać głosy z czatu.</div>';
 
@@ -712,10 +719,19 @@ function loadQuizQuestion(index) {
 }
 
 function renderQuizEmptyState() {
+  if (state.quiz.timerInterval) {
+    clearInterval(state.quiz.timerInterval);
+    state.quiz.timerInterval = null;
+  }
   const catDisplay = document.getElementById('quiz-category-display');
   if (catDisplay) {
-    if (state.isOverlay) catDisplay.style.display = 'none';
-    else catDisplay.style.display = '';
+    if (state.isOverlay) {
+      catDisplay.style.display = 'none';
+    } else {
+      catDisplay.style.display = '';
+      const emptyCatHtml = '<span id="quiz-index-indicator">0 / 0</span>';
+      if (catDisplay.innerHTML !== emptyCatHtml) catDisplay.innerHTML = emptyCatHtml;
+    }
   }
 
   const indicator = document.getElementById('quiz-index-indicator');
@@ -734,6 +750,15 @@ function renderQuizEmptyState() {
     }
   }
 
+  const optionsGrid = document.getElementById('quiz-options-container');
+  if (optionsGrid && optionsGrid.classList.contains('voting-active')) {
+    optionsGrid.classList.remove('voting-active');
+  }
+
+  document.querySelectorAll('.option-card').forEach(c => {
+    c.classList.remove('correct', 'wrong');
+  });
+
   ['A', 'B', 'C', 'D'].forEach(k => {
     const textEl = document.getElementById(`opt-text-${k}`);
     const expected = state.isOverlay ? '...' : '-';
@@ -749,6 +774,9 @@ function renderQuizEmptyState() {
       }
     }
   });
+
+  const podiumCard = document.getElementById('quiz-round-podium');
+  if (podiumCard && podiumCard.style.display !== 'none') podiumCard.style.display = 'none';
 
   const btnStart = document.getElementById('btn-quiz-start');
   if (btnStart) btnStart.disabled = true;
@@ -907,8 +935,7 @@ function renderQuizUI() {
       catDisplay.style.display = 'none';
     } else {
       catDisplay.style.display = '';
-      const indexPart = ` <span id="quiz-index-indicator">${currentNum} / ${total}</span>`;
-      const catHtml = `${q.category || 'Pytanie'}${indexPart}`;
+      const catHtml = `<span id="quiz-index-indicator">${currentNum} / ${total}</span>`;
       if (catDisplay.innerHTML !== catHtml) catDisplay.innerHTML = catHtml;
     }
   }
@@ -1040,15 +1067,22 @@ function renderQuizUI() {
     // Idle state
     if (optionsGrid && optionsGrid.classList.contains('voting-active')) {
       optionsGrid.classList.remove('voting-active');
-      document.querySelectorAll('.option-card').forEach(c => {
-        c.classList.remove('correct', 'wrong');
-        const k = c.getAttribute('data-key');
-        const prog = document.getElementById(`opt-prog-${k}`);
-        const cnt = document.getElementById(`opt-count-${k}`);
-        if (prog && prog.style.width !== '0%') prog.style.width = '0%';
-        if (cnt && cnt.innerText !== '0 odp.') cnt.innerText = '0 odp.';
-      });
     }
+    document.querySelectorAll('.option-card').forEach(c => {
+      c.classList.remove('correct', 'wrong');
+      const k = c.getAttribute('data-key');
+      const prog = document.getElementById(`opt-prog-${k}`);
+      const cnt = document.getElementById(`opt-count-${k}`);
+      if (prog && prog.style.width !== '0%') prog.style.width = '0%';
+      if (cnt) {
+        if (state.isOverlay) {
+          cnt.style.display = 'none';
+        } else {
+          cnt.style.display = '';
+          if (cnt.innerText !== '0 odp.') cnt.innerText = '0 odp.';
+        }
+      }
+    });
     if (podiumCard && podiumCard.style.display !== 'none') podiumCard.style.display = 'none';
   }
 
@@ -1073,14 +1107,11 @@ function updateQuizTimerUI() {
     const pctStr = `${pct}%`;
     if (fill.style.width !== pctStr) fill.style.width = pctStr;
 
-    let bg = 'linear-gradient(90deg, #772ce8 0%, #9146ff 50%, #c084fc 100%)';
-    let shadow = '0 0 10px rgba(145, 70, 255, 0.45)';
-    if (pct < 25) {
+    let bg = 'linear-gradient(90deg, #9ca2ff 0%, #b1b5ff 100%)';
+    let shadow = '0 0 6px rgba(177, 181, 255, 0.35)';
+    if (state.quiz.timerVal <= 5 && state.quiz.timerVal > 0) {
       bg = 'linear-gradient(90deg, #b91c1c 0%, #ef4444 100%)';
-      shadow = '0 0 10px rgba(239, 68, 68, 0.5)';
-    } else if (pct < 50) {
-      bg = 'linear-gradient(90deg, #d97706 0%, #f59e0b 100%)';
-      shadow = '0 0 10px rgba(245, 158, 11, 0.45)';
+      shadow = '0 0 8px rgba(239, 68, 68, 0.4)';
     }
 
     if (fill.style.background !== bg) fill.style.background = bg;

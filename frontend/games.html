@@ -6,10 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StreamTools - Narzędzia Streamera</title>
 
-  <!-- Fonts: Montserrat & Fredoka with Latin-Ext (Polish diacritics) -->
+  <!-- Fonts: Montserrat, Montserrat Alternates & Fredoka with Latin-Ext (Polish diacritics) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Montserrat:wght@400;500;600;700;800&subset=latin,latin-ext&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Montserrat:wght@400;500;600;700;800&family=Montserrat+Alternates:wght@500;600;700;800&subset=latin,latin-ext&display=swap" rel="stylesheet">
 
   <!-- Clean Stylesheet -->
   <link rel="stylesheet" href="./games.css">
@@ -80,8 +80,8 @@
           <!-- Category & Progress Info Bar -->
           <div class="quiz-badge-bar">
             <div style="display: flex; align-items: center; gap: 0.65rem;">
-              <span class="category-tag" id="quiz-category-display">Pytanie <span id="quiz-index-indicator">0 / 0</span></span>
-              <span class="category-tag" id="quiz-votes-counter-badge" style="background: rgba(0, 214, 198, 0.1); border-color: rgba(0, 214, 198, 0.3); color: var(--accent-cyan);">
+              <span class="category-tag" id="quiz-category-display"><span id="quiz-index-indicator">0 / 0</span></span>
+              <span class="category-tag" id="quiz-votes-counter-badge">
                 Oddane głosy: <strong id="quiz-votes-counter" style="margin-left: 0.3rem;">0</strong>
               </span>
             </div>
@@ -229,8 +229,8 @@
               </span>
             </div>
 
-            <div class="giveaway-participants-badge" style="font-size: 0.95rem; font-weight: 700; color: #fff;">
-              Zapisanych: <span id="giveaway-participants-count" style="color: var(--accent-cyan); font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.3rem;">0</span> widzów
+            <div class="giveaway-participants-badge">
+              <span class="giveaway-participants-label">Zapisanych:</span> <span id="giveaway-participants-count">0</span> <span class="giveaway-participants-suffix">widzów</span>
             </div>
           </div>
 
