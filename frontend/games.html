@@ -9,7 +9,9 @@
   <!-- Fonts: Montserrat, Montserrat Alternates & Fredoka with Latin-Ext (Polish diacritics) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Montserrat:wght@400;500;600;700;800&family=Montserrat+Alternates:wght@500;600;700;800&subset=latin,latin-ext&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Montserrat:wght@400;500;600;700;800&family=Montserrat+Alternates:wght@500;600;700;800&subset=latin,latin-ext&display=swap"
+    rel="stylesheet">
 
   <!-- Clean Stylesheet -->
   <link rel="stylesheet" href="./games.css">
@@ -130,12 +132,15 @@
           </div>
 
           <!-- Round Summary / Podium Card -->
-          <div id="quiz-round-podium" class="panel" style="display: none; padding: 1.15rem; border: 1px solid var(--accent-emerald);">
+          <div id="quiz-round-podium" class="panel"
+            style="display: none; padding: 1.15rem; border: 1px solid var(--accent-emerald);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-              <h4 style="color: var(--accent-emerald); font-size: 1.1rem; font-family: 'Fredoka', 'Montserrat', sans-serif;">
+              <h4
+                style="color: var(--accent-emerald); font-size: 1.1rem; font-family: 'Montserrat Alternates', 'Montserrat', sans-serif;">
                 Poprawna odpowiedź: <span id="podium-correct-letter">A</span>
               </h4>
-              <span id="podium-stats-sub" style="font-size: 0.8rem; color: var(--text-secondary);">Poprawne odpowiedzi: 0</span>
+              <span id="podium-stats-sub" style="font-size: 0.8rem; color: var(--text-secondary);">Poprawne odpowiedzi:
+                0</span>
             </div>
             <div id="podium-list" style="display: flex; gap: 0.5rem; flex-wrap: wrap;"></div>
           </div>
@@ -149,11 +154,19 @@
               <button class="btn btn-amber" id="btn-quiz-reveal" onclick="revealQuizAnswer()" disabled>
                 Zakończ i Odsłoń
               </button>
-              <button class="btn btn-secondary btn-icon" id="btn-quiz-prev" onclick="stepQuizQuestion(-1)" title="Poprzednie pytanie">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+              <button class="btn btn-secondary btn-icon" id="btn-quiz-prev" onclick="stepQuizQuestion(-1)"
+                title="Poprzednie pytanie">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
               </button>
-              <button class="btn btn-secondary btn-icon" id="btn-quiz-next" onclick="stepQuizQuestion(1)" title="Następne pytanie">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              <button class="btn btn-secondary btn-icon" id="btn-quiz-next" onclick="stepQuizQuestion(1)"
+                title="Następne pytanie">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="9 18 15 12 9 6"></polyline>
+                </svg>
               </button>
             </div>
 
@@ -161,11 +174,13 @@
               <button class="btn btn-primary" onclick="openBulkImportModal()" title="Szybki import pytań z tekstu">
                 Importuj Pytania
               </button>
-              <button class="btn btn-secondary" onclick="openQuestionManagerModal()" title="Zarządzaj załadowanymi pytaniami">
+              <button class="btn btn-secondary" onclick="openQuestionManagerModal()"
+                title="Zarządzaj załadowanymi pytaniami">
                 Baza Pytań (<span id="btn-count-loaded-q">0</span>)
               </button>
 
-              <select id="select-quiz-time" class="input-field" style="width: auto; padding: 0.45rem 0.75rem; font-weight: 600;">
+              <select id="select-quiz-time" class="input-field"
+                style="width: auto; padding: 0.45rem 0.75rem; font-weight: 600;">
                 <option value="15">15s</option>
                 <option value="30" selected>30s</option>
                 <option value="45">45s</option>
@@ -197,7 +212,8 @@
           <div class="sidebar-card panel">
             <div class="card-title">
               <span>Twoje Pytania</span>
-              <button class="btn btn-secondary btn-icon" onclick="openQuestionManagerModal()" style="font-size: 0.75rem; padding: 0.25rem 0.55rem;">Zarządzaj</button>
+              <button class="btn btn-secondary btn-icon" onclick="openQuestionManagerModal()"
+                style="font-size: 0.75rem; padding: 0.25rem 0.55rem;">Zarządzaj</button>
             </div>
             <div class="mini-leaderboard-list" id="quick-question-list">
               <div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.8rem;">
@@ -219,10 +235,13 @@
         <!-- Left: Giveaway Stage Card -->
         <div class="giveaway-stage-card panel">
 
-          <div class="giveaway-header-bar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+          <div class="giveaway-header-bar"
+            style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
             <div class="giveaway-meta-tags host-only-element" style="display: flex; align-items: center; gap: 0.65rem;">
-              <span class="category-tag" style="background: rgba(255, 176, 32, 0.12); border-color: rgba(255, 176, 32, 0.3); color: var(--accent-amber);">
-                Słowo kluczowe: <strong id="giveaway-keyword-badge" style="color: #fff; margin-left: 0.35rem;">!losowanie</strong>
+              <span class="category-tag"
+                style="background: rgba(255, 176, 32, 0.12); border-color: rgba(255, 176, 32, 0.3); color: var(--accent-amber);">
+                Słowo kluczowe: <strong id="giveaway-keyword-badge"
+                  style="color: #fff; margin-left: 0.35rem;">!losowanie</strong>
               </span>
               <span class="giveaway-status-badge closed" id="giveaway-status-pill">
                 Zapisy Zamknięte
@@ -230,7 +249,8 @@
             </div>
 
             <div class="giveaway-participants-badge">
-              <span class="giveaway-participants-label">Zapisanych:</span> <span id="giveaway-participants-count">0</span> <span class="giveaway-participants-suffix">widzów</span>
+              <span class="giveaway-participants-label">Zapisanych:</span> <span
+                id="giveaway-participants-count">0</span> <span class="giveaway-participants-suffix">widzów</span>
             </div>
           </div>
 
@@ -247,13 +267,16 @@
             <!-- Winner Reveal Card -->
             <div class="winner-card-reveal" id="giveaway-winner-card" style="display: none;">
               <div style="text-align: center;">
-                <div class="giveaway-winner-title" id="giveaway-winner-title" style="font-size: 0.8rem; color: var(--accent-amber); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">
+                <div class="giveaway-winner-title" id="giveaway-winner-title"
+                  style="font-size: 0.8rem; color: var(--accent-amber); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">
                   Zwycięzca Losowania
                 </div>
-                <div id="giveaway-winner-name" style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 2.4rem; font-weight: 700; color: #fff; line-height: 1.1;">
+                <div id="giveaway-winner-name"
+                  style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 2.4rem; font-weight: 700; color: #fff; line-height: 1.1;">
                   @username
                 </div>
-                <div id="giveaway-winner-details" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.35rem;">
+                <div id="giveaway-winner-details"
+                  style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.35rem;">
                   Wyłoniono spośród 0 uczestników
                 </div>
                 <div id="giveaway-winner-csprng" class="giveaway-csprng-badge" style="display: none;">
@@ -261,7 +284,8 @@
                 </div>
               </div>
 
-              <button class="btn btn-amber host-only-element" id="btn-giveaway-reroll" onclick="rollGiveawayWinner(true)" title="Wylosuj ponownie jeśli zwycięzca jest AFK">
+              <button class="btn btn-amber host-only-element" id="btn-giveaway-reroll"
+                onclick="rollGiveawayWinner(true)" title="Wylosuj ponownie jeśli zwycięzca jest AFK">
                 Wylosuj Ponownie (Reroll)
               </button>
             </div>
@@ -337,7 +361,8 @@
           <div class="hangman-top-bar">
             <div>
               <span class="category-tag" id="hangman-category-display">Hasło</span>
-              <span id="hangman-hint-display" style="margin-left: 0.75rem; font-size: 0.825rem; color: var(--text-secondary);"></span>
+              <span id="hangman-hint-display"
+                style="margin-left: 0.75rem; font-size: 0.825rem; color: var(--text-secondary);"></span>
             </div>
 
             <!-- Life Pips Meter -->
@@ -348,7 +373,8 @@
               <span class="life-pip active" id="heart-4"></span>
               <span class="life-pip active" id="heart-5"></span>
               <span class="life-pip active" id="heart-6"></span>
-              <span style="font-size: 0.825rem; font-weight: 700; color: #fff; margin-left: 0.35rem;" id="hangman-lives-num">6/6</span>
+              <span style="font-size: 0.825rem; font-weight: 700; color: #fff; margin-left: 0.35rem;"
+                id="hangman-lives-num">6/6</span>
             </div>
           </div>
 
@@ -361,7 +387,9 @@
             <div class="chatter-info-box">
               <div class="chatter-turn-label">
                 <span>Tura Chatera</span>
-                <span id="chatter-activity-note" style="color: var(--text-muted); font-weight: 500; font-size: 0.72rem; margin-left: 0.4rem;">(Ostatnie 1-2 min)</span>
+                <span id="chatter-activity-note"
+                  style="color: var(--text-muted); font-weight: 500; font-size: 0.72rem; margin-left: 0.4rem;">(Ostatnie
+                  1-2 min)</span>
               </div>
               <div class="chatter-name-headline" id="chatter-name-display">
                 Kliknij poniżej "Wylosuj Chatera"
@@ -377,7 +405,9 @@
 
           <!-- Wrong letters list -->
           <div class="wrong-letters-box">
-            <span style="font-size: 0.78rem; font-weight: 700; color: var(--accent-red); text-transform: uppercase;">Błędne litery:</span>
+            <span
+              style="font-size: 0.78rem; font-weight: 700; color: var(--accent-red); text-transform: uppercase;">Błędne
+              litery:</span>
             <div id="wrong-letters-chips" style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
               <span style="font-size: 0.8rem; color: var(--text-muted);">Brak</span>
             </div>
@@ -386,10 +416,12 @@
           <!-- Host Action Dock for Hangman -->
           <div class="host-action-dock host-only-element" style="width: 100%;">
             <div class="dock-group">
-              <button class="btn btn-primary" onclick="rollActiveChatter()" title="Wylosuj aktywnego chatera z ostatnich 1-2 minut">
+              <button class="btn btn-primary" onclick="rollActiveChatter()"
+                title="Wylosuj aktywnego chatera z ostatnich 1-2 minut">
                 Wylosuj Chatera
               </button>
-              <button class="btn btn-amber" onclick="skipActiveChatter()" title="Gracz jest AFK? Pomiń i wylosuj kolejnego">
+              <button class="btn btn-amber" onclick="skipActiveChatter()"
+                title="Gracz jest AFK? Pomiń i wylosuj kolejnego">
                 Pomiń (AFK)
               </button>
               <button class="btn btn-secondary" onclick="openCustomWordModal()">
@@ -398,7 +430,8 @@
             </div>
 
             <div class="dock-group">
-              <button class="btn btn-secondary" id="btn-turn-mode-toggle" onclick="toggleTurnMode()" title="Przełącz tryb">
+              <button class="btn btn-secondary" id="btn-turn-mode-toggle" onclick="toggleTurnMode()"
+                title="Przełącz tryb">
                 Tryb: Chatter
               </button>
               <button class="btn btn-danger" onclick="revealHangmanWord()" title="Odsłoń całe hasło">
@@ -415,7 +448,11 @@
             <div class="card-title">
               <span>Aktywni na Czacie (1-2 min)</span>
               <button class="btn btn-secondary btn-icon" onclick="refreshActiveChattersList()" title="Odśwież listę">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M23 4v6h-6"></path>
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
               </button>
             </div>
             <div style="font-size: 0.75rem; color: var(--text-muted);">
@@ -431,7 +468,8 @@
           <div class="sidebar-card panel" style="margin-top: 1rem;">
             <div class="card-title">
               <span>Baza Haseł</span>
-              <button class="btn btn-secondary btn-icon" onclick="openCustomWordModal()" style="font-size: 0.75rem; padding: 0.25rem 0.55rem;">Zarządzaj</button>
+              <button class="btn btn-secondary btn-icon" onclick="openCustomWordModal()"
+                style="font-size: 0.75rem; padding: 0.25rem 0.55rem;">Zarządzaj</button>
             </div>
             <div class="mini-leaderboard-list" id="quick-hangman-list">
               <div style="color: var(--text-muted); text-align: center; padding: 1rem; font-size: 0.8rem;">
@@ -451,7 +489,8 @@
       <div class="quiz-stage-card panel">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
           <div>
-            <h2 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.35rem; color: #fff;">Ranking Sesji Streamu</h2>
+            <h2 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.35rem; color: #fff;">Ranking Sesji
+              Streamu</h2>
             <p style="color: var(--text-secondary); font-size: 0.825rem;">
               Zbiorcza punktacja za poprawne odpowiedzi w Quizie oraz odgadnięte litery w Wisielcu.
             </p>
@@ -469,7 +508,8 @@
         <div style="overflow-x: auto; margin-top: 0.85rem;">
           <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
             <thead>
-              <tr style="border-bottom: 2px solid var(--twitch-border); color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">
+              <tr
+                style="border-bottom: 2px solid var(--twitch-border); color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">
                 <th style="padding: 0.65rem 0.85rem;">#</th>
                 <th style="padding: 0.65rem 0.85rem;">Widz (Twitch Nick)</th>
                 <th style="padding: 0.65rem 0.85rem;">Punkty Łącznie</th>
@@ -500,14 +540,22 @@
   <div class="modal-overlay" id="modal-question-manager">
     <div class="modal-box" style="max-width: 700px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
-        <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem;">Baza Pytań (<span id="qm-total-count">0</span>)</h3>
-        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-question-manager')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem;">Baza Pytań (<span
+            id="qm-total-count">0</span>)</h3>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-question-manager')"><svg width="14"
+            height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg></button>
       </div>
 
-      <div class="question-manager-list" id="qm-items-container" style="max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem;">
+      <div class="question-manager-list" id="qm-items-container"
+        style="max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem;">
       </div>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; flex-wrap: wrap; gap: 0.65rem;">
+      <div
+        style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; flex-wrap: wrap; gap: 0.65rem;">
         <button class="btn btn-danger" onclick="clearAllQuestions()">
           Wyczyść Wszystkie
         </button>
@@ -528,8 +576,14 @@
   <div class="modal-overlay modal-secondary" id="modal-bulk-import">
     <div class="modal-box" style="max-width: 650px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
-        <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem;">Import Pytań (Wklej Tekst)</h3>
-        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-bulk-import')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem;">Import Pytań (Wklej Tekst)
+        </h3>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-bulk-import')"><svg width="14" height="14"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg></button>
       </div>
 
       <p style="color: var(--text-secondary); font-size: 0.825rem; margin-bottom: 0.75rem;">
@@ -537,7 +591,8 @@
       </p>
 
       <div style="margin-bottom: 1rem;">
-        <textarea id="textarea-bulk-import" class="input-field" rows="9" placeholder="Wklej swoje pytania tutaj..." style="font-family: monospace; font-size: 0.8rem; width: 100%; resize: vertical;"></textarea>
+        <textarea id="textarea-bulk-import" class="input-field" rows="9" placeholder="Wklej swoje pytania tutaj..."
+          style="font-family: monospace; font-size: 0.8rem; width: 100%; resize: vertical;"></textarea>
       </div>
 
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.65rem;">
@@ -560,7 +615,12 @@
     <div class="modal-box">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
         <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem;">Konfiguracja Losowania</h3>
-        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-giveaway-settings')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-giveaway-settings')"><svg width="14"
+            height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg></button>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.25rem;">
@@ -568,14 +628,16 @@
           <label style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">
             Słowo kluczowe do wpisania na czacie:
           </label>
-          <input type="text" id="input-giveaway-keyword" class="input-field" placeholder="np. !losowanie" style="width: 100%;">
+          <input type="text" id="input-giveaway-keyword" class="input-field" placeholder="np. !losowanie"
+            style="width: 100%;">
         </div>
 
         <div>
           <label style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">
             Tytuł nagrody / Opis (opcjonalnie):
           </label>
-          <input type="text" id="input-giveaway-prize" class="input-field" placeholder="np. Klucz Steam do gry" style="width: 100%;">
+          <input type="text" id="input-giveaway-prize" class="input-field" placeholder="np. Klucz Steam do gry"
+            style="width: 100%;">
         </div>
       </div>
 
@@ -589,18 +651,26 @@
   <!-- CUSTOM WORD & SAVED WORDS MODAL (Hangman) -->
   <div class="modal-overlay" id="modal-custom-word">
     <div class="modal-box" style="max-width: 680px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; padding-bottom: 0.65rem; border-bottom: 1px solid var(--twitch-border);">
+      <div
+        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; padding-bottom: 0.65rem; border-bottom: 1px solid var(--twitch-border);">
         <div style="display: flex; align-items: center; gap: 0.65rem;">
           <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem; margin: 0; color: #fff;">
             Baza Haseł Wisielca
           </h3>
-          <span class="category-tag" id="hangman-saved-count" style="font-size: 0.72rem; color: var(--twitch-purple-light);">0 haseł</span>
+          <span class="category-tag" id="hangman-saved-count"
+            style="font-size: 0.72rem; color: var(--twitch-purple-light);">0 haseł</span>
         </div>
-        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-custom-word')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-custom-word')"><svg width="14" height="14"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg></button>
       </div>
 
       <!-- Add New Word Panel -->
-      <div style="background: var(--twitch-base); border: 1px solid var(--twitch-border); border-radius: var(--radius-sm); padding: 0.85rem; margin-bottom: 1rem;">
+      <div
+        style="background: var(--twitch-base); border: 1px solid var(--twitch-border); border-radius: var(--radius-sm); padding: 0.85rem; margin-bottom: 1rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
           <span style="font-size: 0.825rem; font-weight: 700; color: #fff;">Dodaj Nowe Hasło</span>
           <span style="font-size: 0.72rem; color: var(--text-muted);">Polskie znaki i spacje dozwolone</span>
@@ -608,19 +678,27 @@
 
         <div style="display: flex; flex-direction: column; gap: 0.55rem;">
           <div>
-            <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem; font-weight: 600;">Hasło do odgadnięcia:</label>
-            <input type="text" id="input-custom-word" class="input-field" placeholder="np. WIEDŹMIN DZIKI GON" style="text-transform: uppercase; width: 100%; font-family: 'Fredoka', 'Montserrat', sans-serif; font-weight: 600; letter-spacing: 0.04em;">
+            <label
+              style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem; font-weight: 600;">Hasło
+              do odgadnięcia:</label>
+            <input type="text" id="input-custom-word" class="input-field" placeholder="np. WIEDŹMIN DZIKI GON"
+              style="text-transform: uppercase; width: 100%; font-family: 'Fredoka', 'Montserrat', sans-serif; font-weight: 600; letter-spacing: 0.04em;">
           </div>
 
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem;">
             <div>
-              <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem; font-weight: 600;">Kategoria:</label>
-              <input type="text" id="input-custom-cat" class="input-field" placeholder="np. Gry Komputerowe" style="width: 100%;">
+              <label
+                style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem; font-weight: 600;">Kategoria:</label>
+              <input type="text" id="input-custom-cat" class="input-field" placeholder="np. Gry Komputerowe"
+                style="width: 100%;">
             </div>
 
             <div>
-              <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem; font-weight: 600;">Podpowiedź (opcjonalnie):</label>
-              <input type="text" id="input-custom-hint" class="input-field" placeholder="np. Produkcja CD Projekt Red" style="width: 100%;">
+              <label
+                style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.2rem; font-weight: 600;">Podpowiedź
+                (opcjonalnie):</label>
+              <input type="text" id="input-custom-hint" class="input-field" placeholder="np. Produkcja CD Projekt Red"
+                style="width: 100%;">
             </div>
           </div>
 
@@ -637,15 +715,18 @@
           <span style="font-size: 0.8rem; font-weight: 700; color: var(--text-secondary);">
             Zapisane Hasła w Bazie Serwera:
           </span>
-          <button class="btn btn-danger" onclick="clearAllHangmanWords()" style="font-size: 0.725rem; padding: 0.25rem 0.55rem;">
+          <button class="btn btn-danger" onclick="clearAllHangmanWords()"
+            style="font-size: 0.725rem; padding: 0.25rem 0.55rem;">
             Wyczyść Listę
           </button>
         </div>
-        <div id="hangman-saved-list" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 0.25rem;">
+        <div id="hangman-saved-list"
+          style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 0.25rem;">
         </div>
       </div>
 
-      <div style="display: flex; justify-content: flex-end; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--twitch-border);">
+      <div
+        style="display: flex; justify-content: flex-end; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--twitch-border);">
         <button class="btn btn-secondary" onclick="closeModal('modal-custom-word')">Zamknij</button>
       </div>
     </div>
@@ -656,7 +737,12 @@
     <div class="modal-box">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
         <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem;">Konfiguracja OBS Studio</h3>
-        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-obs')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-obs')"><svg width="14" height="14"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg></button>
       </div>
 
       <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem; line-height: 1.4;">
@@ -665,17 +751,20 @@
 
       <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.25rem;">
         <div>
-          <label style="font-size: 0.75rem; color: var(--accent-cyan); font-weight: 700; display: block; margin-bottom: 0.25rem;">
+          <label
+            style="font-size: 0.75rem; color: var(--accent-cyan); font-weight: 700; display: block; margin-bottom: 0.25rem;">
             Link Uniwersalny (Auto-Switch):
           </label>
           <div style="display: flex; gap: 0.5rem;">
-            <input type="text" id="obs-url-auto" class="input-field" readonly style="border-color: var(--accent-cyan); flex: 1;">
+            <input type="text" id="obs-url-auto" class="input-field" readonly
+              style="border-color: var(--accent-cyan); flex: 1;">
             <button class="btn btn-primary" onclick="copyOBSUrl('auto')">Kopiuj</button>
           </div>
         </div>
 
         <div>
-          <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.25rem;">
+          <label
+            style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.25rem;">
             Link Dedykowany (Tylko Quiz):
           </label>
           <div style="display: flex; gap: 0.5rem;">
@@ -685,7 +774,8 @@
         </div>
 
         <div>
-          <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.25rem;">
+          <label
+            style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.25rem;">
             Link Dedykowany (Tylko Losowanie):
           </label>
           <div style="display: flex; gap: 0.5rem;">
@@ -695,7 +785,8 @@
         </div>
 
         <div>
-          <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.25rem;">
+          <label
+            style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 0.25rem;">
             Link Dedykowany (Tylko Wisielec):
           </label>
           <div style="display: flex; gap: 0.5rem;">
@@ -705,7 +796,8 @@
         </div>
       </div>
 
-      <div style="background: var(--twitch-base); padding: 0.75rem; border-radius: var(--radius-sm); font-size: 0.78rem; color: var(--text-secondary); border-left: 3px solid var(--twitch-purple);">
+      <div
+        style="background: var(--twitch-base); padding: 0.75rem; border-radius: var(--radius-sm); font-size: 0.78rem; color: var(--text-secondary); border-left: 3px solid var(--twitch-purple);">
         Wskazówka OBS: Ustaw szerokość 1920 i wysokość 1080 w źródle przeglądarki.
       </div>
     </div>
@@ -715,8 +807,14 @@
   <div class="modal-overlay" id="modal-sim">
     <div class="modal-box" style="max-width: 500px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
-        <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem;">Symulator Czatu (Testy Lokalne)</h3>
-        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-sim')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        <h3 style="font-family: 'Fredoka', 'Montserrat', sans-serif; font-size: 1.25rem;">Symulator Czatu (Testy
+          Lokalne)</h3>
+        <button class="btn btn-secondary btn-icon" onclick="closeModal('modal-sim')"><svg width="14" height="14"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg></button>
       </div>
 
       <p style="color: var(--text-secondary); font-size: 0.825rem; margin-bottom: 1rem;">
@@ -734,10 +832,13 @@
         </div>
 
         <div style="border-top: 1px solid var(--twitch-border); padding-top: 0.85rem;">
-          <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Własna testowa wiadomość na czat:</label>
+          <label style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Własna
+            testowa wiadomość na czat:</label>
           <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-            <input type="text" id="sim-input-user" class="input-field" placeholder="Nick (np. Janek)" style="width: 35%;">
-            <input type="text" id="sim-input-msg" class="input-field" placeholder="Treść (np. B, !losowanie, W)" style="flex: 1;">
+            <input type="text" id="sim-input-user" class="input-field" placeholder="Nick (np. Janek)"
+              style="width: 35%;">
+            <input type="text" id="sim-input-msg" class="input-field" placeholder="Treść (np. B, !losowanie, W)"
+              style="flex: 1;">
           </div>
           <button class="btn btn-success" onclick="simCustomMessage()" style="width: 100%;">
             Wyślij Wiadomość na Czat
