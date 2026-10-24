@@ -1292,7 +1292,7 @@ body.overlay-mode .quiz-question-text {
   font-family: 'Montserrat Alternates', 'Montserrat', sans-serif !important;
   font-size: 1.85rem !important;
   font-weight: 800 !important;
-  color: #B1B5FF !important;
+  color: #FFFFFF !important;
   line-height: 1.3 !important;
   margin: 0.6rem 0 1.25rem 0 !important;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6) !important;
@@ -1426,6 +1426,11 @@ body.overlay-mode .option-card.correct .option-votes-badge {
   border-color: #00ad03 !important;
   background: rgba(0, 173, 3, 0.3) !important;
   color: #ffffff !important;
+}
+
+body.overlay-mode #quiz-round-podium,
+body.overlay-mode #quiz-round-podium * {
+  font-family: 'Montserrat Alternates', 'Montserrat', sans-serif !important;
 }
 
 /* Hangman Overlay Styles */
