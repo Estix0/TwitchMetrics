@@ -10,7 +10,7 @@ BOT_PID=$!
 # Uruchomienie zunifikowanego serwera API + Webpanel
 PORT=${PORT:-8000}
 echo "🌐 Webpanel i API startują na porcie $PORT..."
-uvicorn api:app --host 0.0.0.0 --port "$PORT" --reload &
+uvicorn api:app --host 0.0.0.0 --port "$PORT" --reload --reload-use-polling &
 API_PID=$!
 
 # Obsługa sygnałów wyłączenia (SIGTERM / SIGINT)
